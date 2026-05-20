@@ -123,6 +123,28 @@ Konkrete CAN-Identifier, Payload-Layouts, Ack-Regeln und Fragmentierung sind in 
 
 ---
 
+## Phase A Firmware-Startpunkt
+
+Für den lokalen Hardware-Test gibt es jetzt ein Arduino-Beispiel unter  
+`arduino/phase_a_single_node/phase_a_single_node.ino`.
+
+Ziel des Sketches:
+- Analogwert des Vibrations-/Piezo-Sensors lesen
+- einfachen Basislinien-/Envelope-Filter für lokale Treffererkennung nutzen
+- Relais bei erkanntem Treffer mit sauberem Zeitpuls schalten
+- Rohwert, gefilterte Werte und Treffer über `Serial` ausgeben
+
+Kurz zur Nutzung:
+- In der Arduino IDE als Board **Arduino Pro or Pro Mini** mit passendem ATmega328P-Profil für den verwendeten Wattuino auswählen
+- Sensor-Analogausgang an `A0`, Relais-Steuersignal an `D7`
+- `HIT_THRESHOLD`, `RELAY_PULSE_MS` und `REFRACTORY_MS` am Sketch-Anfang auf die Mechanik anpassen
+- Seriellen Monitor auf `115200 Baud` öffnen; `t` löst einen manuellen Relaispuls aus, `d` schaltet den periodischen Debug-Stream um
+
+Wichtig:
+- Eine Relais-Spule nicht direkt am AVR-Pin treiben
+- Relais nur über Transistor/MOSFET bzw. fertiges Relaismodul mit Freilaufdiode ansteuern
+- Gemeinsame Masse zwischen Wattuino und Treiberstufe herstellen
+
 ## 8) Offene Punkte (für nächste Entscheidung)
 
 - Spannungsversorgung/EMV-Konzept bei mehreren Klappen
