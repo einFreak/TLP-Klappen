@@ -2,7 +2,7 @@
 
 ## Ziel und Umfang
 
-Für TLP-Klappen wird **CAN als Transport** und darüber ein **kleines projektspezifisches Anwendungsprotokoll** verwendet.  
+Für TLP-Klappen wird **CAN als Transport** und darüber ein **kleines projektspezifisches Anwendungsprotokoll** verwendet.
 Die Spezifikation ist bewusst leichtgewichtig: **Classic CAN 2.0A mit 11-Bit-Identifiern**, feste Nachrichtenformate, keine komplexen Dienste wie CANopen.
 
 Ziele:
