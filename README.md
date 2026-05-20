@@ -26,7 +26,7 @@ Dazu wird pro Klappscheibe ein Wattuino Pro Mini mit Piezo-Vibrationssensor eing
 
 ## 2) Empfehlung Bussystem (Entscheidungsvorschlag)
 
-### Empfehlung: **CAN-Bus (mit MCP2515/TJA1050 je Node)**
+### Empfehlung: **CAN-Bus (mit MCP2515/TJA1050 je Node) + leichtes eigenes Protokoll**
 Warum:
 - robust gegen Störungen (Outdoor, lange Leitungen)
 - echte Mehrmaster-Kommunikation (Senden + Empfangen für alle Teilnehmer)
@@ -36,6 +36,7 @@ Warum:
 Hinweis:
 - Nodes erhalten beim Flashen eine eindeutige `node_id`.
 - Physikalisch wird ein gemeinsamer Bus mit Abschlusswiderständen an beiden Enden aufgebaut.
+- Anwendungsschicht: **TLP-CAN/1**, siehe [`CAN_PROTOCOL.md`](./CAN_PROTOCOL.md)
 
 **Alternative für schnellen Prototyp:** RS-485 + Modbus RTU (einfach, aber meist master-zentriert und weniger flexibel bei Broadcast/Event-Modellen).
 
@@ -96,6 +97,8 @@ Pragmatischer Start:
 - `SET_PARAMS`: node_id, refractory_ms, relay_pulse_ms, report_interval_ms
 - `CMD_FLAP`: node_id, action (UP/DOWN/TRIGGER)
 
+Konkrete CAN-Identifier, Payload-Layouts, Ack-Regeln und Fragmentierung sind in [`CAN_PROTOCOL.md`](./CAN_PROTOCOL.md) festgelegt.
+
 ---
 
 ## 7) Umsetzungsphasen
@@ -122,7 +125,6 @@ Pragmatischer Start:
 
 ## 8) Offene Punkte (für nächste Entscheidung)
 
-- finaler Bus-Stack (CAN-Frames direkt vs. leichtes eigenes Protokoll)
 - Spannungsversorgung/EMV-Konzept bei mehreren Klappen
 - mechanische Sensorbefestigung (wiederholbar, wetterfest)
 - Default-Kalibrierstrategie beim ersten Start neuer Nodes
