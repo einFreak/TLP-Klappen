@@ -1,0 +1,36 @@
+## TLP-NodeMCU (ESP8266) - Bedienung
+
+Diese Firmware liest den Vibrationssensor an `A0`, bildet eine Envelope und steuert die Flap ueber `D7`.
+
+## Serielle Befehle (115200 Baud)
+
+- `s=<wert>` setzt den Treffer-Schwellwert zur Laufzeit (Bereich `0..1023`), z. B. `s=300`
+- `r` setzt den Treffer-Latch zurueck und faehrt die Flap nach unten
+- `u` Flap manuell hoch
+- `l` Flap manuell runter
+- `t` Flap manuell toggeln
+- `a` zurueck in den Automatikmodus
+- `d` Debug-Stream an/aus
+- `p` TelePlot-Stream an/aus
+- `?` Hilfe ausgeben
+
+## Trigger- und Latch-Logik
+
+- Die Firmware vergleicht `envelope` mit dem aktuellen Schwellwert.
+- Wenn `envelope >= threshold`, wird ein Treffer erkannt.
+- Bei Treffer wird die Flap gesetzt und `latched=1`.
+- Solange gelatcht, bleibt die Flap gesetzt.
+- Ein Ruecksetzen erfolgt nur mit dem Befehl `r`.
+
+Hinweis: Es gibt kein automatisches Ruecksetzen mehr ueber einen Release-Schwellwert.
+
+## TelePlot-Ausgabe
+
+Die serielle Telemetrie wird im TelePlot-Format gesendet (mit `>` Prefix fuer Serial):
+
+- `>sensor_raw:timestamp:value`
+- `>sensor_envelope:timestamp:value`
+- `>flap_state:timestamp:value`
+
+`timestamp` ist aktuell `millis()` seit Start.
+
