@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TLP-Klappen Dashboard</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="wrap">
+    <section class="panel">
+      <h1 class="title">TLP-Klappen Dashboard</h1>
+      <div class="kpi-grid">
+        <div class="kpi">
+          <div class="label">Klappenstatus</div>
+          <div id="kpiFlap" class="value state-down">DOWN</div>
+        </div>
+        <div class="kpi">
+          <div class="label">Modus</div>
+          <div id="kpiMode" class="value state-auto">AUTO</div>
+        </div>
+        <div class="kpi">
+          <div class="label">Envelope</div>
+          <div id="kpiEnvelope" class="value">0</div>
+        </div>
+        <div class="kpi">
+          <div class="label">Threshold</div>
+          <div id="kpiThreshold" class="value">0</div>
+        </div>
+        <div class="kpi">
+          <div class="label">Sensor Raw</div>
+          <div id="kpiRaw" class="value">0</div>
+        </div>
+        <div class="kpi">
+          <div class="label">Latch</div>
+          <div id="kpiLatch" class="value">0</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2 class="title">Steuerung</h2>
+      <div class="row">
+        <button data-action="up" data-kind="good">Flap UP</button>
+        <button data-action="down" data-kind="warn">Flap DOWN</button>
+        <button data-action="toggle">Toggle</button>
+        <button data-action="auto">Auto</button>
+        <button data-action="reset">Reset Latch</button>
+      </div>
+
+      <div class="threshold-wrap">
+        <input id="thresholdRange" type="range" min="0" max="1023" value="60">
+        <input id="thresholdNumber" type="number" min="0" max="1023" value="60">
+        <button id="setThresholdBtn">Set Threshold</button>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2 class="title">Live Chart</h2>
+      <canvas id="chart" width="920" height="240"></canvas>
+      <div class="status"><span id="sseDot" class="dot bad"></span><span id="sseState">SSE disconnected</span></div>
+    </section>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

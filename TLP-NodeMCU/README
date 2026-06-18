@@ -12,6 +12,7 @@ Diese Firmware liest den Vibrationssensor an `A0`, bildet eine Envelope und steu
 - `a` zurueck in den Automatikmodus
 - `d` Debug-Stream an/aus
 - `p` TelePlot-Stream an/aus
+- `w` Web-URL(s) ausgeben (AP und ggf. STA)
 - `?` Hilfe ausgeben
 
 ## Trigger- und Latch-Logik
@@ -33,4 +34,28 @@ Die serielle Telemetrie wird im TelePlot-Format gesendet (mit `>` Prefix fuer Se
 - `>flap_state:timestamp:value`
 
 `timestamp` ist aktuell `millis()` seit Start.
+
+## Web-Dashboard (LittleFS)
+
+Das Web-Dashboard liegt jetzt in separaten Dateien unter `data/`:
+
+- `data/index.html`
+- `data/style.css`
+- `data/app.js`
+
+Die Firmware bindet diese Dateien ueber LittleFS ein und liefert sie auf `/` aus.
+
+Wichtig: Nach Aenderungen in `data/` muss das Filesystem zusaetzlich zum Firmware-Upload auf den ESP geschrieben werden.
+
+Beispielablauf mit PlatformIO:
+
+1. `pio run -t upload` (Firmware)
+2. `pio run -t uploadfs` (LittleFS-Inhalte)
+
+Danach ist das Dashboard im Browser unter der AP-IP (typisch `192.168.4.1`) erreichbar.
+
+Zusatz: Mit dem seriellen Befehl `w` gibt die Firmware die Web-URL direkt aus:
+
+- `WEB URL (AP): http://<ap_ip>`
+- `WEB URL (STA): http://<sta_ip>` (nur wenn mit WLAN verbunden)
 
