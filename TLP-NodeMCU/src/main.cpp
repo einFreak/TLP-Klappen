@@ -17,6 +17,8 @@ const uint8_t SENSOR_PIN = A0;
 const uint8_t BASELINE_FILTER_SHIFT = 4; // 1/16 IIR baseline smoothing
 const uint8_t ENVELOPE_DECAY_SHIFT = 2;  // Faster decay = smaller value
 const unsigned long SENSOR_SAMPLE_INTERVAL_MS = 50; // Keeps ADC from starving WiFi DHCP on ESP8266
+const unsigned long MANUAL_OVERRIDE_MS = 10000;
+const int HIT_THRESHOLD = 60;
 
 // Stepwise activation switches for regression isolation.
 const bool FEATURE_SENSOR_PIPELINE = true;
@@ -26,6 +28,10 @@ const bool FEATURE_SENSOR_SERIAL_LOG = true;
 unsigned long lastStatusAtMs = 0;
 const unsigned long STATUS_INTERVAL_MS = 3000;
 bool flapIsUp = false;
+bool manualOverrideEnabled = false;
+bool hitLatched = false;
+int hitThreshold = HIT_THRESHOLD;
+unsigned long manualOverrideUntilMs = 0;
 long baselineQ8 = 0;
 int envelope = 0;
 int lastRaw = 0;
@@ -36,11 +42,98 @@ unsigned long lastSensorSampleAtMs = 0;
 AsyncWebServer webServer(80);
 AsyncEventSource webEvents("/events");
 
+enum class ControlAction
+{
+  FlapUp,
+  FlapDown,
+  FlapToggle,
+  AutoMode,
+  ResetLatch
+};
+
+bool setThresholdValue(int value, bool printFeedback)
+{
+  if (value < 0 || value > 1023)
+  {
+    if (printFeedback)
+    {
+      Serial.println(F("CMD threshold invalid (expected 0..1023)"));
+    }
+    return false;
+  }
+  hitThreshold = value;
+  if (printFeedback)
+  {
+    Serial.print(F("CMD threshold="));
+    Serial.println(hitThreshold);
+  }
+  return true;
+}
+
 void setFlap(bool moveUp)
 {
   flapIsUp = moveUp;
   digitalWrite(RELAY_PIN, moveUp == RELAY_ACTIVE_HIGH ? HIGH : LOW);
   digitalWrite(ONBOARD_LED_PIN, moveUp == ONBOARD_LED_ACTIVE_LOW ? LOW : HIGH);
+}
+
+void applyControlAction(ControlAction action, bool printFeedback)
+{
+  const unsigned long nowMs = millis();
+
+  if (action == ControlAction::FlapUp)
+  {
+    setFlap(true);
+    manualOverrideEnabled = true;
+    manualOverrideUntilMs = nowMs + MANUAL_OVERRIDE_MS;
+    if (printFeedback)
+    {
+      Serial.print(F("CMD flap=up, mode=manual for ms="));
+      Serial.println(MANUAL_OVERRIDE_MS);
+    }
+  }
+  else if (action == ControlAction::FlapDown)
+  {
+    setFlap(false);
+    manualOverrideEnabled = true;
+    manualOverrideUntilMs = nowMs + MANUAL_OVERRIDE_MS;
+    if (printFeedback)
+    {
+      Serial.print(F("CMD flap=down, mode=manual for ms="));
+      Serial.println(MANUAL_OVERRIDE_MS);
+    }
+  }
+  else if (action == ControlAction::FlapToggle)
+  {
+    setFlap(!flapIsUp);
+    manualOverrideEnabled = true;
+    manualOverrideUntilMs = nowMs + MANUAL_OVERRIDE_MS;
+    if (printFeedback)
+    {
+      Serial.print(F("CMD flap="));
+      Serial.print(flapIsUp ? F("up") : F("down"));
+      Serial.print(F(", mode=manual for ms="));
+      Serial.println(MANUAL_OVERRIDE_MS);
+    }
+  }
+  else if (action == ControlAction::AutoMode)
+  {
+    manualOverrideEnabled = false;
+    manualOverrideUntilMs = 0;
+    if (printFeedback)
+    {
+      Serial.println(F("CMD mode=auto"));
+    }
+  }
+  else if (action == ControlAction::ResetLatch)
+  {
+    hitLatched = false;
+    setFlap(false);
+    if (printFeedback)
+    {
+      Serial.println(F("CMD reset (latched=0, flap=down)"));
+    }
+  }
 }
 
 void printApStatus()
@@ -72,6 +165,15 @@ String buildStatusJson()
   json += F(",\"mac\":\"");
   json += WiFi.softAPmacAddress();
   json += F("\"");
+  json += F(",\"flap\":");
+  json += flapIsUp ? 1 : 0;
+  json += F(",\"latched\":");
+  json += hitLatched ? 1 : 0;
+  json += F(",\"mode\":\"");
+  json += manualOverrideEnabled ? F("manual") : F("auto");
+  json += F("\"");
+  json += F(",\"threshold\":");
+  json += hitThreshold;
   if (FEATURE_SENSOR_JSON)
   {
     json += F(",\"raw\":");
@@ -210,6 +312,14 @@ void setup()
 void loop()
 {
   const unsigned long nowMs = millis();
+
+  // Manual override timeout -> revert to auto.
+  if (manualOverrideEnabled && nowMs >= manualOverrideUntilMs)
+  {
+    manualOverrideEnabled = false;
+    manualOverrideUntilMs = 0;
+    Serial.println(F("MODE auto (manual override timeout)"));
+  }
 
   if (FEATURE_SENSOR_PIPELINE && (nowMs - lastSensorSampleAtMs >= SENSOR_SAMPLE_INTERVAL_MS))
   {
