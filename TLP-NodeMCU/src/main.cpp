@@ -16,6 +16,12 @@ const bool ONBOARD_LED_ACTIVE_LOW = true;
 const uint8_t SENSOR_PIN = A0;
 const uint8_t BASELINE_FILTER_SHIFT = 4; // 1/16 IIR baseline smoothing
 const uint8_t ENVELOPE_DECAY_SHIFT = 2;  // Faster decay = smaller value
+const unsigned long SENSOR_SAMPLE_INTERVAL_MS = 50; // Keeps ADC from starving WiFi DHCP on ESP8266
+
+// Stepwise activation switches for regression isolation.
+const bool FEATURE_SENSOR_PIPELINE = true;
+const bool FEATURE_SENSOR_JSON = true;
+const bool FEATURE_SENSOR_SERIAL_LOG = true;
 
 unsigned long lastStatusAtMs = 0;
 const unsigned long STATUS_INTERVAL_MS = 3000;
@@ -25,6 +31,7 @@ int envelope = 0;
 int lastRaw = 0;
 int lastBaseline = 0;
 int lastCentered = 0;
+unsigned long lastSensorSampleAtMs = 0;
 
 AsyncWebServer webServer(80);
 AsyncEventSource webEvents("/events");
@@ -64,15 +71,19 @@ String buildStatusJson()
   json += WiFi.softAPgetStationNum();
   json += F(",\"mac\":\"");
   json += WiFi.softAPmacAddress();
-  json += F("\",\"raw\":");
-  json += lastRaw;
-  json += F(",\"baseline\":");
-  json += lastBaseline;
-  json += F(",\"centered\":");
-  json += lastCentered;
-  json += F(",\"envelope\":");
-  json += envelope;
-  json += F("\"}");
+  json += F("\"");
+  if (FEATURE_SENSOR_JSON)
+  {
+    json += F(",\"raw\":");
+    json += lastRaw;
+    json += F(",\"baseline\":");
+    json += lastBaseline;
+    json += F(",\"centered\":");
+    json += lastCentered;
+    json += F(",\"envelope\":");
+    json += envelope;
+  }
+  json += F("}");
   return json;
 }
 
@@ -145,9 +156,13 @@ void setup()
   Serial.println();
   Serial.println(F("ESP8266 SoftAP with Web Dashboard"));
   Serial.println(F("Relay pin D7 ready (default LOW), LED mirrors flap state"));
-  Serial.println(F("Sensor pipeline enabled on A0 (baseline + envelope)"));
+  Serial.print(F("Feature sensor pipeline="));
+  Serial.println(FEATURE_SENSOR_PIPELINE ? F("on") : F("off"));
 
-  baselineQ8 = static_cast<long>(analogRead(SENSOR_PIN)) << 8;
+  if (FEATURE_SENSOR_PIPELINE)
+  {
+    baselineQ8 = static_cast<long>(analogRead(SENSOR_PIN)) << 8;
+  }
 
   if (!LittleFS.begin())
   {
@@ -196,35 +211,46 @@ void loop()
 {
   const unsigned long nowMs = millis();
 
-  // Sensor pipeline: raw ADC -> moving baseline -> centered -> envelope.
-  lastRaw = analogRead(SENSOR_PIN);
-  baselineQ8 += ((static_cast<long>(lastRaw) << 8) - baselineQ8) >> BASELINE_FILTER_SHIFT;
-  lastBaseline = static_cast<int>(baselineQ8 >> 8);
-  lastCentered = lastRaw - lastBaseline;
+  if (FEATURE_SENSOR_PIPELINE && (nowMs - lastSensorSampleAtMs >= SENSOR_SAMPLE_INTERVAL_MS))
+  {
+    lastSensorSampleAtMs = nowMs;
 
-  const int magnitude = abs(lastCentered);
-  if (magnitude > envelope)
-  {
-    envelope = magnitude;
-  }
-  else if (envelope > 0)
-  {
-    envelope -= max(1, envelope >> ENVELOPE_DECAY_SHIFT);
+    // Sensor pipeline: raw ADC -> moving baseline -> centered -> envelope.
+    lastRaw = analogRead(SENSOR_PIN);
+    baselineQ8 += ((static_cast<long>(lastRaw) << 8) - baselineQ8) >> BASELINE_FILTER_SHIFT;
+    lastBaseline = static_cast<int>(baselineQ8 >> 8);
+    lastCentered = lastRaw - lastBaseline;
+
+    const int magnitude = abs(lastCentered);
+    if (magnitude > envelope)
+    {
+      envelope = magnitude;
+    }
+    else if (envelope > 0)
+    {
+      envelope -= max(1, envelope >> ENVELOPE_DECAY_SHIFT);
+    }
   }
 
   if (nowMs - lastStatusAtMs >= STATUS_INTERVAL_MS)
   {
     lastStatusAtMs = nowMs;
     printApStatus();
-    Serial.print(F("SENSOR raw="));
-    Serial.print(lastRaw);
-    Serial.print(F(" baseline="));
-    Serial.print(lastBaseline);
-    Serial.print(F(" centered="));
-    Serial.print(lastCentered);
-    Serial.print(F(" envelope="));
-    Serial.println(envelope);
+    if (FEATURE_SENSOR_SERIAL_LOG)
+    {
+      Serial.print(F("SENSOR raw="));
+      Serial.print(lastRaw);
+      Serial.print(F(" baseline="));
+      Serial.print(lastBaseline);
+      Serial.print(F(" centered="));
+      Serial.print(lastCentered);
+      Serial.print(F(" envelope="));
+      Serial.println(envelope);
+    }
   }
 
   streamApStatus();
+
+  // Keep WiFi background tasks responsive even with active sensor processing.
+  yield();
 }
