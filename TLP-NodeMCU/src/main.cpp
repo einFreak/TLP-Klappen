@@ -13,10 +13,18 @@ const uint8_t RELAY_PIN = D7;
 const bool RELAY_ACTIVE_HIGH = true;
 const uint8_t ONBOARD_LED_PIN = LED_BUILTIN;
 const bool ONBOARD_LED_ACTIVE_LOW = true;
+const uint8_t SENSOR_PIN = A0;
+const uint8_t BASELINE_FILTER_SHIFT = 4; // 1/16 IIR baseline smoothing
+const uint8_t ENVELOPE_DECAY_SHIFT = 2;  // Faster decay = smaller value
 
 unsigned long lastStatusAtMs = 0;
 const unsigned long STATUS_INTERVAL_MS = 3000;
 bool flapIsUp = false;
+long baselineQ8 = 0;
+int envelope = 0;
+int lastRaw = 0;
+int lastBaseline = 0;
+int lastCentered = 0;
 
 AsyncWebServer webServer(80);
 AsyncEventSource webEvents("/events");
@@ -45,7 +53,7 @@ void printApStatus()
 String buildStatusJson()
 {
   String json;
-  json.reserve(256);
+  json.reserve(340);
   json += F("{\"ssid\":\"");
   json += AP_SSID;
   json += F("\",\"ip\":\"");
@@ -56,6 +64,14 @@ String buildStatusJson()
   json += WiFi.softAPgetStationNum();
   json += F(",\"mac\":\"");
   json += WiFi.softAPmacAddress();
+  json += F("\",\"raw\":");
+  json += lastRaw;
+  json += F(",\"baseline\":");
+  json += lastBaseline;
+  json += F(",\"centered\":");
+  json += lastCentered;
+  json += F(",\"envelope\":");
+  json += envelope;
   json += F("\"}");
   return json;
 }
@@ -129,6 +145,9 @@ void setup()
   Serial.println();
   Serial.println(F("ESP8266 SoftAP with Web Dashboard"));
   Serial.println(F("Relay pin D7 ready (default LOW), LED mirrors flap state"));
+  Serial.println(F("Sensor pipeline enabled on A0 (baseline + envelope)"));
+
+  baselineQ8 = static_cast<long>(analogRead(SENSOR_PIN)) << 8;
 
   if (!LittleFS.begin())
   {
@@ -176,10 +195,35 @@ void setup()
 void loop()
 {
   const unsigned long nowMs = millis();
+
+  // Sensor pipeline: raw ADC -> moving baseline -> centered -> envelope.
+  lastRaw = analogRead(SENSOR_PIN);
+  baselineQ8 += ((static_cast<long>(lastRaw) << 8) - baselineQ8) >> BASELINE_FILTER_SHIFT;
+  lastBaseline = static_cast<int>(baselineQ8 >> 8);
+  lastCentered = lastRaw - lastBaseline;
+
+  const int magnitude = abs(lastCentered);
+  if (magnitude > envelope)
+  {
+    envelope = magnitude;
+  }
+  else if (envelope > 0)
+  {
+    envelope -= max(1, envelope >> ENVELOPE_DECAY_SHIFT);
+  }
+
   if (nowMs - lastStatusAtMs >= STATUS_INTERVAL_MS)
   {
     lastStatusAtMs = nowMs;
     printApStatus();
+    Serial.print(F("SENSOR raw="));
+    Serial.print(lastRaw);
+    Serial.print(F(" baseline="));
+    Serial.print(lastBaseline);
+    Serial.print(F(" centered="));
+    Serial.print(lastCentered);
+    Serial.print(F(" envelope="));
+    Serial.println(envelope);
   }
 
   streamApStatus();
