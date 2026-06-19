@@ -4,8 +4,8 @@
 #include <ESPAsyncWebServer.h>
 #include <LittleFS.h>
 
-const char AP_SSID[] = "TLP-Klappen-Test";
-const char AP_PASSWORD[] = "test12345"; // >= 8 chars for WPA2
+const char AP_SSID[] = "TLP-Klappen";
+const char AP_PASSWORD[] = "tlp12345"; // WPA2, >= 8 chars
 const uint8_t AP_CHANNEL = 1;
 const bool AP_HIDDEN = false;
 const uint8_t AP_MAX_CLIENTS = 4;
@@ -22,12 +22,7 @@ const int HIT_THRESHOLD = 60;
 const unsigned long TELEPLOT_INTERVAL_MS = 50;
 const unsigned long DEBUG_INTERVAL_MS = 200;
 
-// Stepwise activation switches for regression isolation.
-const bool FEATURE_SENSOR_PIPELINE = true;
-const bool FEATURE_SENSOR_JSON = true;
-const bool FEATURE_SENSOR_SERIAL_LOG = true;
-
-bool debugStreamingEnabled = true;
+bool debugStreamingEnabled = false;
 bool teleplotStreamingEnabled = false;
 
 unsigned long lastDebugAtMs = 0;
@@ -284,42 +279,20 @@ String buildStatusJson()
   json += F("\"");
   json += F(",\"threshold\":");
   json += hitThreshold;
-  if (FEATURE_SENSOR_JSON)
-  {
-    json += F(",\"raw\":");
-    json += lastRaw;
-    json += F(",\"baseline\":");
-    json += lastBaseline;
-    json += F(",\"centered\":");
-    json += lastCentered;
-    json += F(",\"envelope\":");
-    json += envelope;
-  }
+  json += F(",\"raw\":");
+  json += lastRaw;
+  json += F(",\"baseline\":");
+  json += lastBaseline;
+  json += F(",\"centered\":");
+  json += lastCentered;
+  json += F(",\"envelope\":");
+  json += envelope;
   json += F("}");
   return json;
 }
 
 void startWebServer()
 {
-  // Debug route: list LittleFS contents
-  webServer.on("/fs", HTTP_GET, [](AsyncWebServerRequest *request) {
-    String json = F("{\"files\":[");
-    Dir dir = LittleFS.openDir("/");
-    bool first = true;
-    while (dir.next())
-    {
-      if (!first) json += ",";
-      json += F("{\"name\":\"");
-      json += dir.fileName();
-      json += F("\",\"size\":");
-      json += dir.fileSize();
-      json += F("}");
-      first = false;
-    }
-    json += F("]}");
-    request->send(200, "application/json", json);
-  });
-
   // API routes MUST be registered before serveStatic, otherwise the
   // catch-all static handler intercepts them and returns 404.
   webServer.on("/api/status", HTTP_GET, [](AsyncWebServerRequest *request) {
@@ -393,36 +366,13 @@ void setup()
   delay(200);
 
   Serial.println();
-  Serial.println(F("ESP8266 SoftAP with Web Dashboard"));
-  Serial.println(F("Relay pin D7 ready (default LOW), LED mirrors flap state"));
-  Serial.print(F("Feature sensor pipeline="));
-  Serial.println(FEATURE_SENSOR_PIPELINE ? F("on") : F("off"));
+  Serial.println(F("TLP-Klappen NodeMCU"));
 
-  if (FEATURE_SENSOR_PIPELINE)
-  {
-    baselineQ8 = static_cast<long>(analogRead(SENSOR_PIN)) << 8;
-  }
+  baselineQ8 = static_cast<long>(analogRead(SENSOR_PIN)) << 8;
 
   if (!LittleFS.begin())
   {
-    Serial.println(F("LittleFS mount failed!"));
-    Serial.println(F("Run: pio run -t uploadfs"));
-  }
-  else
-  {
-    Serial.println(F("LittleFS mounted successfully"));
-    
-    // Debug: list files
-    Serial.println(F("LittleFS contents:"));
-    Dir dir = LittleFS.openDir("/");
-    while (dir.next())
-    {
-      Serial.print(F("  "));
-      Serial.print(dir.fileName());
-      Serial.print(F(" ("));
-      Serial.print(dir.fileSize());
-      Serial.println(F(" bytes)"));
-    }
+    Serial.println(F("LittleFS mount failed! Run: pio run -t uploadfs"));
   }
 
   WiFi.persistent(false);
@@ -474,7 +424,7 @@ void loop()
     Serial.println(F("MODE auto (manual override timeout)"));
   }
 
-  if (FEATURE_SENSOR_PIPELINE && (nowMs - lastSensorSampleAtMs >= SENSOR_SAMPLE_INTERVAL_MS))
+  if (nowMs - lastSensorSampleAtMs >= SENSOR_SAMPLE_INTERVAL_MS)
   {
     lastSensorSampleAtMs = nowMs;
 
@@ -499,17 +449,6 @@ void loop()
   {
     lastStatusAtMs = nowMs;
     printApStatus();
-    if (FEATURE_SENSOR_SERIAL_LOG)
-    {
-      Serial.print(F("SENSOR raw="));
-      Serial.print(lastRaw);
-      Serial.print(F(" baseline="));
-      Serial.print(lastBaseline);
-      Serial.print(F(" centered="));
-      Serial.print(lastCentered);
-      Serial.print(F(" envelope="));
-      Serial.println(envelope);
-    }
   }
 
   if (debugStreamingEnabled && (nowMs - lastDebugAtMs >= DEBUG_INTERVAL_MS))
@@ -525,8 +464,7 @@ void loop()
   }
 
   // Automatic hit trigger: envelope over threshold -> flap up + latch.
-  // Only active when sensor pipeline is running and no manual override is active.
-  if (FEATURE_SENSOR_PIPELINE && !manualOverrideEnabled && !hitLatched && envelope >= hitThreshold)
+  if (!manualOverrideEnabled && !hitLatched && envelope >= hitThreshold)
   {
     hitLatched = true;
     setFlap(true);
