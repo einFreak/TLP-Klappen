@@ -1,0 +1,89 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "PIO: Upload Filesystem (LittleFS)",
+      "type": "shell",
+      "command": "C:\\Users\\felix\\.platformio\\penv\\Scripts\\platformio.exe",
+      "args": [
+        "run",
+        "-t",
+        "uploadfs",
+        "--environment",
+        "nodemcuv2",
+        "--upload-port",
+        "COM7"
+      ],
+      "problemMatcher": [],
+      "group": {
+        "kind": "build",
+        "isDefault": false
+      },
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": false,
+        "panel": "shared",
+        "showReuseMessage": true,
+        "clear": false
+      }
+    },
+    {
+      "label": "PIO: Upload Code",
+      "type": "shell",
+      "command": "C:\\Users\\felix\\.platformio\\penv\\Scripts\\platformio.exe",
+      "args": [
+        "run",
+        "-t",
+        "upload",
+        "--environment",
+        "nodemcuv2",
+        "--upload-port",
+        "COM7"
+      ],
+      "problemMatcher": [],
+      "group": {
+        "kind": "build",
+        "isDefault": false
+      },
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": false,
+        "panel": "shared",
+        "showReuseMessage": true,
+        "clear": false
+      }
+    },
+    {
+      "label": "PIO: Upload Filesystem + Code",
+      "type": "shell",
+      "command": "C:\\Users\\felix\\.platformio\\penv\\Scripts\\platformio.exe",
+      "args": [
+        "run",
+        "-t",
+        "uploadfs",
+        "--environment",
+        "nodemcuv2",
+        "--upload-port",
+        "COM7"
+      ],
+      "problemMatcher": [],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": false,
+        "panel": "shared",
+        "showReuseMessage": true,
+        "clear": false
+      },
+      "dependsOn": [
+        "PIO: Upload Code"
+      ]
+    }
+  ]
+}
