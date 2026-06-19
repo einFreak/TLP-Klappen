@@ -524,6 +524,24 @@ void loop()
     printTeleplot(nowMs);
   }
 
+  // Automatic hit trigger: envelope over threshold -> flap up + latch.
+  // Only active when sensor pipeline is running and no manual override is active.
+  if (FEATURE_SENSOR_PIPELINE && !manualOverrideEnabled && !hitLatched && envelope >= hitThreshold)
+  {
+    hitLatched = true;
+    setFlap(true);
+    Serial.print(F("HIT ms="));
+    Serial.print(nowMs);
+    Serial.print(F(" raw="));
+    Serial.print(lastRaw);
+    Serial.print(F(" centered="));
+    Serial.print(lastCentered);
+    Serial.print(F(" envelope="));
+    Serial.print(envelope);
+    Serial.print(F(" threshold="));
+    Serial.println(hitThreshold);
+  }
+
   streamApStatus();
 
   // Keep WiFi background tasks responsive even with active sensor processing.
