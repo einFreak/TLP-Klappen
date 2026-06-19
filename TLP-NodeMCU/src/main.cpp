@@ -9,12 +9,24 @@ const char AP_PASSWORD[] = "test12345"; // >= 8 chars for WPA2
 const uint8_t AP_CHANNEL = 1;
 const bool AP_HIDDEN = false;
 const uint8_t AP_MAX_CLIENTS = 4;
+const uint8_t RELAY_PIN = D7;
+const bool RELAY_ACTIVE_HIGH = true;
+const uint8_t ONBOARD_LED_PIN = LED_BUILTIN;
+const bool ONBOARD_LED_ACTIVE_LOW = true;
 
 unsigned long lastStatusAtMs = 0;
 const unsigned long STATUS_INTERVAL_MS = 3000;
+bool flapIsUp = false;
 
 AsyncWebServer webServer(80);
 AsyncEventSource webEvents("/events");
+
+void setFlap(bool moveUp)
+{
+  flapIsUp = moveUp;
+  digitalWrite(RELAY_PIN, moveUp == RELAY_ACTIVE_HIGH ? HIGH : LOW);
+  digitalWrite(ONBOARD_LED_PIN, moveUp == ONBOARD_LED_ACTIVE_LOW ? LOW : HIGH);
+}
 
 void printApStatus()
 {
@@ -107,11 +119,16 @@ void streamApStatus()
 
 void setup()
 {
+  pinMode(RELAY_PIN, OUTPUT);
+  pinMode(ONBOARD_LED_PIN, OUTPUT);
+  setFlap(false);
+
   Serial.begin(115200);
   delay(200);
 
   Serial.println();
   Serial.println(F("ESP8266 SoftAP with Web Dashboard"));
+  Serial.println(F("Relay pin D7 ready (default LOW), LED mirrors flap state"));
 
   if (!LittleFS.begin())
   {
