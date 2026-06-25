@@ -7,34 +7,98 @@
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <div class="container">
-    <h1>🌐 AP Status</h1>
-    <div class="status-grid">
-      <div class="status-item">
-        <div class="status-label">SSID</div>
-        <div class="status-value" id="apSsid">-</div>
+  <svg width="0" height="0" aria-hidden="true" focusable="false">
+    <defs>
+      <symbol id="flap-up-svg" viewBox="0 0 320 220">
+        <rect x="26" y="126" width="268" height="66" rx="8" fill="#303439"></rect>
+        <rect x="36" y="136" width="248" height="46" rx="6" fill="#3f4750"></rect>
+        <circle cx="160" cy="126" r="10" fill="#aeb8bf"></circle>
+        <rect x="154" y="42" width="12" height="86" rx="5" fill="#d65a33"></rect>
+        <polygon points="160,36 138,66 182,66" fill="#ff9360"></polygon>
+        <text x="160" y="212" text-anchor="middle" fill="#ebf0f4" font-size="16" font-family="Space Grotesk, Trebuchet MS, sans-serif">KLAPPE HOCH</text>
+      </symbol>
+      <symbol id="flap-down-svg" viewBox="0 0 320 220">
+        <rect x="26" y="126" width="268" height="66" rx="8" fill="#303439"></rect>
+        <rect x="36" y="136" width="248" height="46" rx="6" fill="#3f4750"></rect>
+        <circle cx="160" cy="126" r="10" fill="#aeb8bf"></circle>
+        <rect x="110" y="120" width="100" height="14" rx="6" fill="#d65a33"></rect>
+        <text x="160" y="212" text-anchor="middle" fill="#ebf0f4" font-size="16" font-family="Space Grotesk, Trebuchet MS, sans-serif">KLAPPE GEFALLEN</text>
+      </symbol>
+    </defs>
+  </svg>
+
+  <div class="dashboard">
+    <section class="stage-panel">
+      <header class="stage-header">
+        <h1>TLP Klappenstand</h1>
+        <p>Single-Flap Stage</p>
+      </header>
+
+      <div class="flap-card">
+        <div class="flap-visual" id="flapVisual">
+          <svg class="flap-svg flap-up" id="flapUp" viewBox="0 0 320 220" role="img" aria-label="Klappe hoch">
+            <use href="#flap-up-svg"></use>
+          </svg>
+          <svg class="flap-svg flap-down" id="flapDown" viewBox="0 0 320 220" role="img" aria-label="Klappe gefallen">
+            <use href="#flap-down-svg"></use>
+          </svg>
+        </div>
+
+        <div class="flap-metrics">
+          <div class="metric-pill">
+            <span>State</span>
+            <strong id="flapState">-</strong>
+          </div>
+          <div class="metric-pill">
+            <span>Mode</span>
+            <strong id="flapMode">-</strong>
+          </div>
+          <div class="metric-pill">
+            <span>Latch</span>
+            <strong id="flapLatch">-</strong>
+          </div>
+          <div class="metric-pill">
+            <span>Threshold</span>
+            <strong id="flapThreshold">-</strong>
+          </div>
+          <div class="metric-pill wide">
+            <span>Last Trigger Raw</span>
+            <strong id="lastTriggerRaw">-</strong>
+          </div>
+        </div>
       </div>
-      <div class="status-item">
-        <div class="status-label">IP Address</div>
-        <div class="status-value" id="apIp">-</div>
+    </section>
+
+    <aside class="network-panel">
+      <h2>Netzwerk</h2>
+      <div class="status-grid">
+        <div class="status-item">
+          <div class="status-label">SSID</div>
+          <div class="status-value" id="apSsid">-</div>
+        </div>
+        <div class="status-item">
+          <div class="status-label">IP Address</div>
+          <div class="status-value" id="apIp">-</div>
+        </div>
+        <div class="status-item">
+          <div class="status-label">Channel</div>
+          <div class="status-value" id="apChannel">-</div>
+        </div>
+        <div class="status-item">
+          <div class="status-label">Connected Clients</div>
+          <div class="status-value" id="apClients">-</div>
+        </div>
+        <div class="status-item">
+          <div class="status-label">MAC Address</div>
+          <div class="status-value" id="apMac">-</div>
+        </div>
       </div>
-      <div class="status-item">
-        <div class="status-label">Channel</div>
-        <div class="status-value" id="apChannel">-</div>
+
+      <div class="connection-indicator">
+        <div class="dot"></div>
+        <div class="connection-text" id="connectionStatus">Connecting...</div>
       </div>
-      <div class="status-item">
-        <div class="status-label">Connected Clients</div>
-        <div class="status-value" id="apClients">-</div>
-      </div>
-      <div class="status-item">
-        <div class="status-label">MAC Address</div>
-        <div class="status-value" id="apMac" style="font-size: 14px;">-</div>
-      </div>
-    </div>
-    <div class="connection-indicator">
-      <div class="dot"></div>
-      <div class="connection-text" id="connectionStatus">Connecting...</div>
-    </div>
+    </aside>
   </div>
 
   <script src="/app.js"></script>

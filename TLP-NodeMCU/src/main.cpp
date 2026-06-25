@@ -37,6 +37,9 @@ int hitThreshold = HIT_THRESHOLD;
 unsigned long manualOverrideUntilMs = 0;
 long baselineQ8 = 0;
 int envelope = 0;
+int lastTriggerRaw = -1;
+int lastTriggerEnvelope = -1;
+unsigned long lastTriggerAtMs = 0;
 int lastRaw = 0;
 int lastBaseline = 0;
 int lastCentered = 0;
@@ -134,10 +137,10 @@ void applyControlAction(ControlAction action, bool printFeedback)
   else if (action == ControlAction::ResetLatch)
   {
     hitLatched = false;
-    setFlap(false);
+    setFlap(true);
     if (printFeedback)
     {
-      Serial.println(F("CMD reset (latched=0, flap=down)"));
+      Serial.println(F("CMD reset (latched=0, flap=up)"));
     }
   }
 }
@@ -258,7 +261,7 @@ void printApStatus()
 String buildStatusJson()
 {
   String json;
-  json.reserve(340);
+  json.reserve(420);
   json += F("{\"ssid\":\"");
   json += AP_SSID;
   json += F("\",\"ip\":\"");
@@ -287,6 +290,12 @@ String buildStatusJson()
   json += lastCentered;
   json += F(",\"envelope\":");
   json += envelope;
+  json += F(",\"lastTriggerRaw\":");
+  json += lastTriggerRaw;
+  json += F(",\"lastTriggerEnvelope\":");
+  json += lastTriggerEnvelope;
+  json += F(",\"lastTriggerAt\":");
+  json += lastTriggerAtMs;
   json += F("}");
   return json;
 }
@@ -360,7 +369,7 @@ void setup()
 {
   pinMode(RELAY_PIN, OUTPUT);
   pinMode(ONBOARD_LED_PIN, OUTPUT);
-  setFlap(false);
+  setFlap(true);
 
   Serial.begin(115200);
   delay(200);
@@ -467,7 +476,10 @@ void loop()
   if (!manualOverrideEnabled && !hitLatched && envelope >= hitThreshold)
   {
     hitLatched = true;
-    setFlap(true);
+    lastTriggerRaw = lastRaw;
+    lastTriggerEnvelope = envelope;
+    lastTriggerAtMs = nowMs;
+    setFlap(false);
     Serial.print(F("HIT ms="));
     Serial.print(nowMs);
     Serial.print(F(" raw="));
