@@ -1,11 +1,33 @@
+// ---------- Central state ----------
+const state = {
+  flap: {
+    id: 'flap_0',
+    isUp: true,
+    latched: false,
+    mode: 'auto',
+    threshold: 60,
+    raw: 0,
+    envelope: 0,
+    lastTriggerRaw: -1,
+    lastTriggerEnvelope: -1,
+    lastTriggerAt: 0,
+  },
+  network: { ssid: '-', ip: '-', channel: '-', clients: '-', mac: '-' },
+  connected: false,
+};
+
+// ---------- DOM helpers ----------
 function text(id, value) {
   const el = document.getElementById(id);
-  if (el) {
-    el.textContent = value;
-  }
+  if (el) el.textContent = value;
 }
 
-let lastStatus = null;
+function badge(el, label, modifier) {
+  if (!el) return;
+  el.textContent = label;
+  el.className = el.className.replace(/\bbadge--\S+/g, '').trim();
+  if (modifier) el.classList.add('badge--' + modifier);
+}
 
 function setControlsDisabled(disabled) {
   document.querySelectorAll('[data-action]').forEach((btn) => {
@@ -53,77 +75,121 @@ function setDetailOpen(isOpen) {
   panel.setAttribute('aria-hidden', isOpen ? 'false' : 'true');
 }
 
-function applyStatus(data) {
-  lastStatus = data;
+// ---------- Render ----------
+function render() {
+  const f = state.flap;
+  const net = state.network;
 
-  text('apSsid', data.ssid ?? '-');
-  text('apIp', data.ip ?? '-');
-  text('apChannel', data.channel ?? '-');
-  text('apClients', data.clients ?? '-');
-  text('apMac', data.mac ?? '-');
+  // Network
+  text('apSsid', net.ssid);
+  text('apIp', net.ip);
+  text('apChannel', net.channel);
+  text('apClients', net.clients);
+  text('apMac', net.mac);
 
-  const isUp = Number(data.flap) === 1;
+  // Flap SVG
   const flapVisual = document.getElementById('flapVisual');
   if (flapVisual) {
-    flapVisual.classList.remove('up', 'down');
-    flapVisual.classList.add(isUp ? 'up' : 'down');
+    flapVisual.classList.toggle('up', f.isUp);
+    flapVisual.classList.toggle('down', !f.isUp);
   }
 
-  text('flapState', isUp ? 'UP' : 'DOWN');
-  text('flapMode', (data.mode || '-').toUpperCase());
-  text('flapLatch', Number(data.latched) === 1 ? 'LOCKED' : 'FREE');
-  text('flapThreshold', data.threshold ?? '-');
+  // Summary pills
+  text('flapState', f.isUp ? 'HOCH' : 'GEFALLEN');
+  badge(document.getElementById('flapMode'),
+    f.mode === 'manual' ? 'MANUAL' : 'AUTO',
+    f.mode === 'manual' ? 'warn' : 'ok');
+  badge(document.getElementById('flapLatch'),
+    f.latched ? 'LOCKED' : 'FREE',
+    f.latched ? 'danger' : 'ok');
+  text('flapThreshold', f.threshold);
+  text('lastTriggerRaw', f.lastTriggerRaw >= 0 ? f.lastTriggerRaw : '-');
 
-  const triggerRaw = Number(data.lastTriggerRaw);
-  text('lastTriggerRaw', triggerRaw >= 0 ? triggerRaw : '-');
+  // Detail panel
+  text('detailState', f.isUp ? 'HOCH' : 'GEFALLEN');
+  text('detailMode', f.mode.toUpperCase());
+  text('detailTriggerRaw', f.lastTriggerRaw >= 0 ? f.lastTriggerRaw : '-');
+  text('detailTriggerEnvelope', f.lastTriggerEnvelope >= 0 ? f.lastTriggerEnvelope : '-');
+  text('detailTriggerAt', f.lastTriggerAt > 0 ? f.lastTriggerAt + ' ms' : '-');
 
-  text('detailState', isUp ? 'UP' : 'DOWN');
-  text('detailMode', (data.mode || '-').toUpperCase());
-  text('detailTriggerRaw', triggerRaw >= 0 ? triggerRaw : '-');
-  const triggerEnv = Number(data.lastTriggerEnvelope);
-  text('detailTriggerEnvelope', triggerEnv >= 0 ? triggerEnv : '-');
-  const triggerAt = Number(data.lastTriggerAt);
-  text('detailTriggerAt', triggerAt > 0 ? triggerAt : '-');
-
-  const thresholdValue = Number(data.threshold);
   const thresholdRange = document.getElementById('thresholdRange');
   const thresholdNumber = document.getElementById('thresholdNumber');
-  if (thresholdRange && Number.isFinite(thresholdValue)) {
-    thresholdRange.value = String(thresholdValue);
-  }
-  if (thresholdNumber && Number.isFinite(thresholdValue)) {
-    thresholdNumber.value = String(thresholdValue);
-  }
+  if (thresholdRange) thresholdRange.value = String(f.threshold);
+  if (thresholdNumber) thresholdNumber.value = String(f.threshold);
 }
 
+function applyStatus(data) {
+  const f = state.flap;
+  f.isUp          = Number(data.flap) === 1;
+  f.latched       = Number(data.latched) === 1;
+  f.mode          = data.mode || 'auto';
+  f.threshold     = Number.isFinite(Number(data.threshold)) ? Number(data.threshold) : f.threshold;
+  f.raw           = Number(data.raw) || 0;
+  f.envelope      = Number(data.envelope) || 0;
+  f.lastTriggerRaw      = Number(data.lastTriggerRaw) ?? -1;
+  f.lastTriggerEnvelope = Number(data.lastTriggerEnvelope) ?? -1;
+  f.lastTriggerAt       = Number(data.lastTriggerAt) || 0;
+
+  state.network = {
+    ssid: data.ssid ?? '-',
+    ip: data.ip ?? '-',
+    channel: data.channel ?? '-',
+    clients: data.clients ?? '-',
+    mac: data.mac ?? '-',
+  };
+
+  render();
+}
+
+// ---------- HTTP polling ----------
 function updateStatus() {
   fetch('/api/status')
-    .then(r => r.json())
+    .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
     .then(data => {
+      state.connected = true;
       applyStatus(data);
       text('connectionStatus', 'Status OK');
     })
-    .catch(e => {
-      console.error('Status fetch failed:', e);
+    .catch(() => {
+      state.connected = false;
       text('connectionStatus', 'Connection lost');
     });
 }
 
-updateStatus();
+// ---------- SSE with auto-reconnect ----------
+let sseBackoffMs = 1000;
+let sseSource = null;
 
-const eventSource = new EventSource('/events');
-eventSource.addEventListener('status', (e) => {
-  try {
-    const data = JSON.parse(e.data);
-    applyStatus(data);
-    text('connectionStatus', 'Live sync active');
-  } catch (_) {
+function connectSSE() {
+  if (sseSource) {
+    sseSource.close();
+    sseSource = null;
   }
-});
+  const es = new EventSource('/events');
+  sseSource = es;
 
-eventSource.onerror = () => {
-  text('connectionStatus', 'SSE reconnecting...');
-};
+  es.addEventListener('status', (e) => {
+    try {
+      sseBackoffMs = 1000;
+      state.connected = true;
+      applyStatus(JSON.parse(e.data));
+      text('connectionStatus', 'Live');
+    } catch (_) {}
+  });
+
+  es.onerror = () => {
+    state.connected = false;
+    text('connectionStatus', 'SSE offline – retry in ' + (sseBackoffMs / 1000).toFixed(0) + 's');
+    es.close();
+    sseSource = null;
+    const delay = sseBackoffMs;
+    sseBackoffMs = Math.min(sseBackoffMs * 2, 30000);
+    setTimeout(connectSSE, delay);
+  };
+}
+
+updateStatus();
+connectSSE();
 
 document.querySelectorAll('[data-action]').forEach((btn) => {
   btn.addEventListener('click', async () => {

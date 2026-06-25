@@ -253,6 +253,21 @@ body {
   font-size: 20px;
 }
 
+.badge {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 3px 10px;
+  border-radius: 99px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  background: rgba(255,255,255,0.07);
+}
+
+.badge--ok      { background: rgba(46, 194, 126, 0.18); color: #4ade80; }
+.badge--warn    { background: rgba(249, 115,  22, 0.20); color: #fb923c; }
+.badge--danger  { background: rgba(239,  68,  68, 0.20); color: #f87171; }
+
 .metric-pill.wide {
   grid-column: 1 / -1;
 }
