@@ -72,6 +72,12 @@ body {
   display: grid;
   place-items: center;
   overflow: hidden;
+  cursor: pointer;
+}
+
+.flap-visual:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .flap-svg {
@@ -100,6 +106,130 @@ body {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
+}
+
+.flap-detail-panel {
+  display: none;
+  background: #252d37;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  padding: 14px;
+}
+
+.flap-detail-panel.open {
+  display: block;
+}
+
+.detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.detail-header h2 {
+  font-size: 18px;
+}
+
+.icon-btn {
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: transparent;
+  color: var(--text);
+  border-radius: 8px;
+  padding: 4px 9px;
+  cursor: pointer;
+}
+
+.detail-grid {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.detail-item {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 9px;
+}
+
+.detail-item span {
+  display: block;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.detail-item strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 16px;
+}
+
+.detail-item.wide {
+  grid-column: 1 / -1;
+}
+
+.control-row {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.control-row button,
+.threshold-edit button {
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 10px;
+  padding: 10px 8px;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  background: #303a46;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.control-row button:hover,
+.threshold-edit button:hover {
+  background: #3a4655;
+}
+
+.control-row button:disabled,
+.threshold-edit button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.threshold-box {
+  margin-top: 12px;
+}
+
+.threshold-box label {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.threshold-box input[type="range"] {
+  width: 100%;
+}
+
+.threshold-edit {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+}
+
+.threshold-edit input {
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 10px;
+  background: #1d242d;
+  color: var(--text);
+  padding: 9px;
 }
 
 .metric-pill {
@@ -210,5 +340,9 @@ body {
 
   .flap-visual {
     min-height: 250px;
+  }
+
+  .control-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

@@ -35,7 +35,7 @@
       </header>
 
       <div class="flap-card">
-        <div class="flap-visual" id="flapVisual">
+        <div class="flap-visual" id="flapVisual" role="button" tabindex="0" aria-label="Open flap details">
           <svg class="flap-svg flap-up" id="flapUp" viewBox="0 0 320 220" role="img" aria-label="Klappe hoch">
             <use href="#flap-up-svg"></use>
           </svg>
@@ -66,6 +66,53 @@
             <strong id="lastTriggerRaw">-</strong>
           </div>
         </div>
+
+        <section class="flap-detail-panel" id="flapDetailPanel" aria-hidden="true">
+          <header class="detail-header">
+            <h2>Klappe 1 - Details</h2>
+            <button id="closeDetailBtn" class="icon-btn" type="button" aria-label="Close details">X</button>
+          </header>
+
+          <div class="detail-grid">
+            <div class="detail-item">
+              <span>Aktueller Zustand</span>
+              <strong id="detailState">-</strong>
+            </div>
+            <div class="detail-item">
+              <span>Mode</span>
+              <strong id="detailMode">-</strong>
+            </div>
+            <div class="detail-item">
+              <span>Letzter Trigger Raw</span>
+              <strong id="detailTriggerRaw">-</strong>
+            </div>
+            <div class="detail-item">
+              <span>Letzter Trigger Envelope</span>
+              <strong id="detailTriggerEnvelope">-</strong>
+            </div>
+            <div class="detail-item wide">
+              <span>Letzter Trigger Zeitpunkt (ms)</span>
+              <strong id="detailTriggerAt">-</strong>
+            </div>
+          </div>
+
+          <div class="control-row" id="actionRow">
+            <button type="button" data-action="up">UP</button>
+            <button type="button" data-action="down">DOWN</button>
+            <button type="button" data-action="toggle">TOGGLE</button>
+            <button type="button" data-action="auto">AUTO</button>
+            <button type="button" data-action="reset">RESET</button>
+          </div>
+
+          <div class="threshold-box">
+            <label for="thresholdRange">Schwellwert</label>
+            <input id="thresholdRange" type="range" min="0" max="1023" step="1" value="60">
+            <div class="threshold-edit">
+              <input id="thresholdNumber" type="number" min="0" max="1023" step="1" value="60">
+              <button id="applyThresholdBtn" type="button">Setzen</button>
+            </div>
+          </div>
+        </section>
       </div>
     </section>
 
