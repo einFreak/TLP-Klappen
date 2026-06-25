@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
+  <!-- SVG symbols for flap states -->
   <svg width="0" height="0" aria-hidden="true" focusable="false">
     <defs>
       <symbol id="flap-up-svg" viewBox="0 0 320 220">
@@ -27,6 +28,55 @@
     </defs>
   </svg>
 
+  <!-- Flap card template: cloned per flap in app.js -->
+  <template id="flap-card-template">
+    <div class="flap-card" data-flap-id="">
+      <div class="flap-visual" role="button" tabindex="0" aria-label="Details öffnen" data-flap-visual="">
+        <svg class="flap-svg flap-up" viewBox="0 0 320 220" role="img" aria-label="Klappe hoch">
+          <use href="#flap-up-svg"></use>
+        </svg>
+        <svg class="flap-svg flap-down" viewBox="0 0 320 220" role="img" aria-label="Klappe gefallen">
+          <use href="#flap-down-svg"></use>
+        </svg>
+      </div>
+      <div class="flap-metrics">
+        <div class="metric-pill"><span>State</span><strong data-field="flapState">-</strong></div>
+        <div class="metric-pill"><span>Mode</span><strong data-field="flapMode" class="badge">-</strong></div>
+        <div class="metric-pill"><span>Latch</span><strong data-field="flapLatch" class="badge">-</strong></div>
+        <div class="metric-pill"><span>Threshold</span><strong data-field="flapThreshold">-</strong></div>
+        <div class="metric-pill wide"><span>Last Trigger Raw</span><strong data-field="lastTriggerRaw">-</strong></div>
+      </div>
+      <section class="flap-detail-panel" aria-hidden="true">
+        <header class="detail-header">
+          <h2 data-field="cardLabel">Klappe</h2>
+          <button class="icon-btn" type="button" aria-label="Close details" data-close-detail="">✕</button>
+        </header>
+        <div class="detail-grid">
+          <div class="detail-item"><span>Zustand</span><strong data-field="detailState">-</strong></div>
+          <div class="detail-item"><span>Mode</span><strong data-field="detailMode">-</strong></div>
+          <div class="detail-item"><span>Trigger Raw</span><strong data-field="detailTriggerRaw">-</strong></div>
+          <div class="detail-item"><span>Trigger Envelope</span><strong data-field="detailTriggerEnvelope">-</strong></div>
+          <div class="detail-item wide"><span>Trigger Zeitpunkt (ms)</span><strong data-field="detailTriggerAt">-</strong></div>
+        </div>
+        <div class="control-row">
+          <button type="button" data-action="up" data-flap-id="">UP</button>
+          <button type="button" data-action="down" data-flap-id="">DOWN</button>
+          <button type="button" data-action="toggle" data-flap-id="">TOGGLE</button>
+          <button type="button" data-action="auto" data-flap-id="">AUTO</button>
+          <button type="button" data-action="reset" data-flap-id="">RESET</button>
+        </div>
+        <div class="threshold-box">
+          <label>Schwellwert</label>
+          <input data-field="thresholdRange" type="range" min="0" max="1023" step="1" value="60">
+          <div class="threshold-edit">
+            <input data-field="thresholdNumber" type="number" min="0" max="1023" step="1" value="60">
+            <button type="button" data-apply-threshold="">Setzen</button>
+          </div>
+        </div>
+      </section>
+    </div>
+  </template>
+
   <div class="dashboard">
     <section class="stage-panel">
       <header class="stage-header">
@@ -34,86 +84,7 @@
         <p>Single-Flap Stage</p>
       </header>
 
-      <div class="flap-card">
-        <div class="flap-visual" id="flapVisual" role="button" tabindex="0" aria-label="Open flap details">
-          <svg class="flap-svg flap-up" id="flapUp" viewBox="0 0 320 220" role="img" aria-label="Klappe hoch">
-            <use href="#flap-up-svg"></use>
-          </svg>
-          <svg class="flap-svg flap-down" id="flapDown" viewBox="0 0 320 220" role="img" aria-label="Klappe gefallen">
-            <use href="#flap-down-svg"></use>
-          </svg>
-        </div>
-
-        <div class="flap-metrics">
-          <div class="metric-pill">
-            <span>State</span>
-            <strong id="flapState">-</strong>
-          </div>
-          <div class="metric-pill">
-            <span>Mode</span>
-            <strong id="flapMode" class="badge">-</strong>
-          </div>
-          <div class="metric-pill">
-            <span>Latch</span>
-            <strong id="flapLatch" class="badge">-</strong>
-          </div>
-          <div class="metric-pill">
-            <span>Threshold</span>
-            <strong id="flapThreshold">-</strong>
-          </div>
-          <div class="metric-pill wide">
-            <span>Last Trigger Raw</span>
-            <strong id="lastTriggerRaw">-</strong>
-          </div>
-        </div>
-
-        <section class="flap-detail-panel" id="flapDetailPanel" aria-hidden="true">
-          <header class="detail-header">
-            <h2>Klappe 1 - Details</h2>
-            <button id="closeDetailBtn" class="icon-btn" type="button" aria-label="Close details">X</button>
-          </header>
-
-          <div class="detail-grid">
-            <div class="detail-item">
-              <span>Aktueller Zustand</span>
-              <strong id="detailState">-</strong>
-            </div>
-            <div class="detail-item">
-              <span>Mode</span>
-              <strong id="detailMode">-</strong>
-            </div>
-            <div class="detail-item">
-              <span>Letzter Trigger Raw</span>
-              <strong id="detailTriggerRaw">-</strong>
-            </div>
-            <div class="detail-item">
-              <span>Letzter Trigger Envelope</span>
-              <strong id="detailTriggerEnvelope">-</strong>
-            </div>
-            <div class="detail-item wide">
-              <span>Letzter Trigger Zeitpunkt (ms)</span>
-              <strong id="detailTriggerAt">-</strong>
-            </div>
-          </div>
-
-          <div class="control-row" id="actionRow">
-            <button type="button" data-action="up">UP</button>
-            <button type="button" data-action="down">DOWN</button>
-            <button type="button" data-action="toggle">TOGGLE</button>
-            <button type="button" data-action="auto">AUTO</button>
-            <button type="button" data-action="reset">RESET</button>
-          </div>
-
-          <div class="threshold-box">
-            <label for="thresholdRange">Schwellwert</label>
-            <input id="thresholdRange" type="range" min="0" max="1023" step="1" value="60">
-            <div class="threshold-edit">
-              <input id="thresholdNumber" type="number" min="0" max="1023" step="1" value="60">
-              <button id="applyThresholdBtn" type="button">Setzen</button>
-            </div>
-          </div>
-        </section>
-      </div>
+      <div id="flapStage" class="flap-stage"></div>
     </section>
 
     <aside class="network-panel">
