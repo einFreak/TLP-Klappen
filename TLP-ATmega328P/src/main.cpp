@@ -239,6 +239,7 @@ void handleCanCommand(uint8_t msgType, const INT8U* payload, INT8U payloadLen) {
       autoModeEnabled = false;
       Serial.println(F("CAN CMD flap=up"));
       sendCanResult(CAN_MSG_FLAP_COMMAND, requestId, CAN_RESULT_OK, action, flapIsUp ? 1 : 0);
+      sendHeartbeat(millis());
       return;
     }
 
@@ -247,6 +248,7 @@ void handleCanCommand(uint8_t msgType, const INT8U* payload, INT8U payloadLen) {
       autoModeEnabled = false;
       Serial.println(F("CAN CMD flap=down"));
       sendCanResult(CAN_MSG_FLAP_COMMAND, requestId, CAN_RESULT_OK, action, flapIsUp ? 1 : 0);
+      sendHeartbeat(millis());
       return;
     }
 
@@ -255,6 +257,7 @@ void handleCanCommand(uint8_t msgType, const INT8U* payload, INT8U payloadLen) {
       autoModeEnabled = false;
       Serial.println(F("CAN CMD flap=toggle"));
       sendCanResult(CAN_MSG_FLAP_COMMAND, requestId, CAN_RESULT_OK, action, flapIsUp ? 1 : 0);
+      sendHeartbeat(millis());
       return;
     }
 
@@ -263,6 +266,7 @@ void handleCanCommand(uint8_t msgType, const INT8U* payload, INT8U payloadLen) {
       setFlapState(true);
       Serial.println(F("CAN CMD flap=auto"));
       sendCanResult(CAN_MSG_FLAP_COMMAND, requestId, CAN_RESULT_OK, action, flapIsUp ? 1 : 0);
+      sendHeartbeat(millis());
       return;
     }
 
@@ -274,6 +278,7 @@ void handleCanCommand(uint8_t msgType, const INT8U* payload, INT8U payloadLen) {
       setFlapState(true);
       Serial.println(F("CAN CMD flap=reset"));
       sendCanResult(CAN_MSG_FLAP_COMMAND, requestId, CAN_RESULT_OK, action, flapIsUp ? 1 : 0);
+      sendHeartbeat(millis());
       return;
     }
 

@@ -259,6 +259,37 @@ void rememberCanResult(uint8_t sourceNodeId, const INT8U *rxData, INT8U rxLen, u
     pending->state = (lastCanCommandResult.status == CAN_RESULT_OK)
       ? PendingCommandState::Ack
       : PendingCommandState::Nack;
+
+    // Apply flap command result immediately so status endpoints/UI do not
+    // need to wait for the next heartbeat to reflect the new state.
+    if (pending->state == PendingCommandState::Ack &&
+        pending->msgType == TLP_CAN_MSG_FLAP_COMMAND)
+    {
+      NodeState &state = getNodeState(sourceNodeId);
+      if (state.seen)
+      {
+        const bool reportedFlapUp = (pending->data1 != 0);
+        if (reportedFlapUp)
+        {
+          state.statusFlags |= (1u << 0);
+          state.statusFlags &= static_cast<uint8_t>(~(1u << 2));
+        }
+        else
+        {
+          state.statusFlags &= static_cast<uint8_t>(~(1u << 0));
+          state.statusFlags |= (1u << 2);
+        }
+
+        if (pending->data0 == CAN_FLAP_AUTO || pending->data0 == CAN_FLAP_RESET)
+        {
+          state.statusFlags |= (1u << 1);
+        }
+        else
+        {
+          state.statusFlags &= static_cast<uint8_t>(~(1u << 1));
+        }
+      }
+    }
   }
 }
 
