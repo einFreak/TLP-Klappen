@@ -185,14 +185,8 @@ function renderCard(flap) {
     visual.classList.toggle('down', !flap.isUp);
   }
 
-  const stateEl = qf(card, 'flapState');
-  if (stateEl) stateEl.textContent = flap.isUp ? 'HOCH' : 'GEFALLEN';
-
-  badge(qf(card, 'flapMode'), flap.mode === 'manual' ? 'MANUAL' : 'AUTO', flap.mode === 'manual' ? 'warn' : 'ok');
+  // Update compact card: label and online badge only
   badge(qf(card, 'flapOnline'), flap.online ? 'ONLINE' : 'OFFLINE', flap.online ? 'ok' : 'danger');
-
-  if (qf(card, 'flapThreshold')) qf(card, 'flapThreshold').textContent = flap.threshold;
-  if (qf(card, 'lastTriggerRaw')) qf(card, 'lastTriggerRaw').textContent = flap.lastTriggerRaw >= 0 ? flap.lastTriggerRaw : '-';
 
   const panel = card.querySelector('.flap-detail-panel');
   if (panel) {
@@ -209,9 +203,6 @@ function renderCard(flap) {
 
   if (qf(card, 'detailState')) qf(card, 'detailState').textContent = flap.isUp ? 'HOCH' : 'GEFALLEN';
   if (qf(card, 'detailMode')) qf(card, 'detailMode').textContent = flap.mode.toUpperCase();
-  if (qf(card, 'detailTriggerRaw')) qf(card, 'detailTriggerRaw').textContent = flap.lastTriggerRaw >= 0 ? flap.lastTriggerRaw : '-';
-  if (qf(card, 'detailTriggerEnvelope')) qf(card, 'detailTriggerEnvelope').textContent = flap.lastTriggerEnvelope >= 0 ? flap.lastTriggerEnvelope : '-';
-  if (qf(card, 'detailTriggerAt')) qf(card, 'detailTriggerAt').textContent = formatTriggerAt(flap.lastTriggerAt);
 
   const cmdStatus = qf(card, 'commandStatus');
   if (cmdStatus) {
