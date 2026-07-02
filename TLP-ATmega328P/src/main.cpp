@@ -33,6 +33,7 @@ const uint8_t CAN_MSG_SET_THRESHOLD = 0x2;
 const uint8_t CAN_MSG_FLAP_COMMAND = 0x3;
 const uint8_t CAN_MSG_RESULT = 0x4;
 const uint8_t CAN_MSG_SENSOR_SUMMARY = 0x5;
+const uint8_t CAN_MSG_FLAP_TIMING = 0x6;
 
 const uint8_t CAN_RESULT_OK = 0;
 const uint8_t CAN_RESULT_INVALID_ARG = 1;
@@ -55,6 +56,7 @@ uint8_t eventCounter = 0;
 
 int peakSinceLastReport = 0;
 uint8_t sensorSummaryCounter = 0;
+uint32_t lastFlapUpDurationMs = 0;
 
 bool flapIsUp = true;
 bool autoModeEnabled = true;
@@ -72,6 +74,7 @@ unsigned long lastSensorSummaryAtMs = 0;
 unsigned long bootMs = 0;
 unsigned long burnInStartedAtMs = 0;
 unsigned long lastBurnInLogAtMs = 0;
+unsigned long flapUpSinceMs = 0;
 
 long noiseFloorQ8 = 0;
 
@@ -80,7 +83,9 @@ uint32_t heartbeatErrorCount = 0;
 
 INT8U detectedCanClock = MCP_8MHZ;
 
+void setFlapState(bool isUp, unsigned long nowMs);
 void setFlapState(bool isUp);
+void sendFlapTiming(unsigned long nowMs, uint32_t upDurationMs);
 
 uint16_t buildCanId(uint8_t priority, uint8_t msgType, uint8_t nodeId) {
   return (static_cast<uint16_t>(priority & 0x03) << 9) |
@@ -184,6 +189,29 @@ void sendSensorSummary(unsigned long nowMs) {
   const INT8U txResult = canController.sendMsgBuf(canId, 0, 8, payload);
   if (txResult != CAN_OK) {
     Serial.print(F("CAN SENSOR_SUMMARY tx_fail code="));
+    Serial.println(txResult);
+  }
+}
+
+void sendFlapTiming(unsigned long nowMs, uint32_t upDurationMs) {
+  if (!canNormalModeActive) {
+    return;
+  }
+
+  INT8U payload[8] = {0};
+  payload[0] = static_cast<uint8_t>(upDurationMs & 0xFFu);
+  payload[1] = static_cast<uint8_t>((upDurationMs >> 8) & 0xFFu);
+  payload[2] = static_cast<uint8_t>((upDurationMs >> 16) & 0xFFu);
+  payload[3] = static_cast<uint8_t>((upDurationMs >> 24) & 0xFFu);
+  payload[4] = static_cast<uint8_t>(eventCounter);
+  payload[5] = static_cast<uint8_t>(buildStatusFlags());
+  payload[6] = static_cast<uint8_t>(nowMs & 0xFFu);
+  payload[7] = static_cast<uint8_t>((nowMs >> 8) & 0xFFu);
+
+  const INT32U canId = buildCanId(CAN_PRIORITY_CYCLIC, CAN_MSG_FLAP_TIMING, NODE_ID);
+  const INT8U txResult = canController.sendMsgBuf(canId, 0, 8, payload);
+  if (txResult != CAN_OK) {
+    Serial.print(F("CAN FLAP_TIMING tx_fail code="));
     Serial.println(txResult);
   }
 }
@@ -455,10 +483,34 @@ void setRelay(bool enabled) {
   digitalWrite(RELAY_PIN, enabled == RELAY_ACTIVE_HIGH ? HIGH : LOW);
 }
 
-void setFlapState(bool isUp) {
+void setFlapState(bool isUp, unsigned long nowMs) {
+  const bool wasUp = flapIsUp;
   flapIsUp = isUp;
   // Keep relay energized only while flap is down.
   setRelay(!flapIsUp);
+
+  if (!wasUp && isUp) {
+    flapUpSinceMs = nowMs;
+    return;
+  }
+
+  if (wasUp && !isUp) {
+    const uint32_t upDurationMs = (flapUpSinceMs > 0)
+      ? static_cast<uint32_t>(nowMs - flapUpSinceMs)
+      : 0u;
+    lastFlapUpDurationMs = upDurationMs;
+    flapUpSinceMs = 0;
+    sendFlapTiming(nowMs, upDurationMs);
+    return;
+  }
+
+  if (isUp && flapUpSinceMs == 0) {
+    flapUpSinceMs = nowMs;
+  }
+}
+
+void setFlapState(bool isUp) {
+  setFlapState(isUp, millis());
 }
 
 void printHelp() {
@@ -528,7 +580,7 @@ void processSerialCommand(const char* command) {
 
   const char c = command[0];
   if (c == 't' || c == 'T') {
-    setFlapState(!flapIsUp);
+    setFlapState(!flapIsUp, millis());
     autoModeEnabled = false;
     Serial.print(F("CMD flap_up="));
     Serial.println(flapIsUp ? 1 : 0);
@@ -588,6 +640,7 @@ void setup() {
   baselineQ8 = static_cast<long>(analogRead(SENSOR_PIN)) << 8;
   noiseFloorQ8 = 0;
   bootMs = millis();
+  flapUpSinceMs = bootMs;
   burnInStartedAtMs = bootMs;
   lastBurnInLogAtMs = bootMs;
 
@@ -657,7 +710,7 @@ void loop() {
   if (autoModeEnabled && envelope >= hitThreshold && refractoryExpired) {
     lastHitAtMs = nowMs;
     eventCounter++;
-    setFlapState(false);
+    setFlapState(false, nowMs);
 
     Serial.print(F("HIT ms="));
     Serial.print(nowMs);

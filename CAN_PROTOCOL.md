@@ -78,6 +78,7 @@ Niedrigere CAN-ID gewinnt die Arbitration. Deshalb gelten:
 | `CMD_FLAP` | `0b01` | `0x3` | Zentrale -> Node/Broadcast | Klappe steuern (UP/DOWN/TOGGLE/AUTO/RESET) |
 | `RESULT` | `0b01` | `0x4` | Node -> Zentrale | ACK/NACK für Befehle |
 | `SENSOR_SUMMARY` | `0b10` | `0x5` | Node -> Zentrale | Sensor-Rohwerte für Threshold-Optimierung |
+| `FLAP_TIMING` | `0b10` | `0x6` | Node -> Zentrale | Letzte UP-Dauer beim Übergang nach DOWN |
 
 Rationale:
 - `HIT_EVENT` hat höchste Priorität, damit Treffer nicht von Debug- oder Statusdaten verdrängt werden.
@@ -178,6 +179,23 @@ Ack-Regel:
 - **broadcast:** kein ACK
 
 Hinweis: Mit `SENSOR_SUMMARY` (msg_type 0x5) bekommst du `current_raw`, `peak` und `noise_floor` übermittelt. Empfohlene Threshold-Formel: `noise_floor * 2` bis `noise_floor * 3`.
+
+---
+
+### 5.6 `FLAP_TIMING`
+
+CAN-ID: `priority=0b10`, `msg_type=0x6`, `node_id=<source>`
+
+Diese Nachricht wird gesendet, wenn die Klappe von **UP nach DOWN** wechselt. Sie übermittelt die Dauer, wie lange die Klappe zuvor oben war.
+
+| Byte | Feld | Typ | Beschreibung |
+|---:|---|---|---|
+| 0..3 | `last_up_time_ms` | `u32` | Gemessene Dauer der vorherigen UP-Phase in Millisekunden |
+| 4 | `event_counter` | `u8` | aktueller Event-Zähler des Nodes |
+| 5 | `status_flags` | `u8` | Flags analog HEARTBEAT-Status |
+| 6..7 | `event_time_ms16` | `u16` | lokaler Millisekunden-Zeitstempel (low 16 Bit) |
+
+Ack-Regel: **kein ACK**
 
 ---
 

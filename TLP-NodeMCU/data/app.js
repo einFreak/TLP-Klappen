@@ -134,6 +134,7 @@ function ensureFlapModel(nodeId) {
       sensorRaw: 0,
       sensorPeak: 0,
       sensorNoise: 0,
+      lastUpTimeMs: 0,
       commandState: 'idle',
       commandText: 'Bereit',
       detailOpen: false,
@@ -219,6 +220,7 @@ function renderDetailPanel() {
     detailSensorRaw: String(openFlap.sensorRaw),
     detailSensorPeak: String(openFlap.sensorPeak),
     detailSensorNoise: String(openFlap.sensorNoise),
+    detailLastUpTime: String(openFlap.lastUpTimeMs) + ' ms',
     detailThreshold: String(openFlap.threshold),
   };
 
@@ -391,6 +393,7 @@ function applyStatus(data) {
       flap.sensorRaw = finiteOr(node.sensorRaw, flap.sensorRaw);
       flap.sensorPeak = finiteOr(node.sensorPeak, flap.sensorPeak);
       flap.sensorNoise = finiteOr(node.sensorNoise, flap.sensorNoise);
+      flap.lastUpTimeMs = finiteOr(node.lastUpTimeMs, flap.lastUpTimeMs);
 
       flap.isUp = computeNodeFlapState(node);
       flap.mode = (flap.flags & (1 << 1)) !== 0 ? 'auto' : 'manual';

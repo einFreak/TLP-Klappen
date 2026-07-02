@@ -28,6 +28,7 @@ const uint8_t TLP_CAN_MSG_SET_THRESHOLD = 0x2;
 const uint8_t TLP_CAN_MSG_FLAP_COMMAND = 0x3;
 const uint8_t TLP_CAN_MSG_RESULT = 0x4;
 const uint8_t TLP_CAN_MSG_SENSOR_SUMMARY = 0x5;
+const uint8_t TLP_CAN_MSG_FLAP_TIMING = 0x6;
 const uint8_t TLP_CAN_PRIORITY_COMMAND = 0b01;
 const uint8_t TLP_CAN_PRIORITY_CYCLIC = 0b10;
 const uint8_t TLP_CAN_MAX_NODES = 32;
@@ -121,6 +122,8 @@ struct NodeState
   uint16_t noiseFloor;
   uint8_t sensorSummaryCounter;
   unsigned long lastSensorSummaryAtMs;
+  uint32_t lastUpDurationMs;
+  unsigned long lastFlapTimingAtMs;
 };
 
 NodeState nodeStates[TLP_CAN_MAX_NODES] = {};
@@ -409,6 +412,25 @@ void updateNodeSensorSummary(uint8_t parsedPriority, uint8_t nodeId, const INT8U
   state.lastSensorSummaryAtMs = nowMs;
 }
 
+void updateNodeFlapTiming(uint8_t parsedPriority, uint8_t nodeId, const INT8U *rxData, INT8U rxLen, unsigned long nowMs)
+{
+  if (rxLen < 4)
+  {
+    return;
+  }
+
+  NodeState &state = getNodeState(nodeId);
+  state.seen = true;
+  state.nodeId = nodeId;
+  state.lastPriority = parsedPriority;
+  state.lastMsgType = TLP_CAN_MSG_FLAP_TIMING;
+  state.lastUpDurationMs = static_cast<uint32_t>(rxData[0]) |
+                           (static_cast<uint32_t>(rxData[1]) << 8) |
+                           (static_cast<uint32_t>(rxData[2]) << 16) |
+                           (static_cast<uint32_t>(rxData[3]) << 24);
+  state.lastFlapTimingAtMs = nowMs;
+}
+
 const __FlashStringHelper *canClockToText(INT8U clockSel)
 {
   if (clockSel == MCP_8MHZ) return F("8MHz");
@@ -641,6 +663,10 @@ void pollCanFrames()
     {
       updateNodeSensorSummary(parsedPriority, parsedNodeId, rxData, rxLen, nowMs);
     }
+    else if (parsedMsgType == TLP_CAN_MSG_FLAP_TIMING)
+    {
+      updateNodeFlapTiming(parsedPriority, parsedNodeId, rxData, rxLen, nowMs);
+    }
     else if (parsedMsgType == TLP_CAN_MSG_RESULT)
     {
       rememberCanResult(parsedNodeId, rxData, rxLen, nowMs);
@@ -792,6 +818,14 @@ void writeStatusJson(Print &out, bool includeExtendedNodes)
       out.print(state.statusFlags);
       out.print(F(",\"uptimeSeconds\":"));
       out.print(state.uptimeSeconds);
+      out.print(F(",\"sensorRaw\":"));
+      out.print(state.currentRaw);
+      out.print(F(",\"sensorPeak\":"));
+      out.print(state.peak);
+      out.print(F(",\"sensorNoise\":"));
+      out.print(state.noiseFloor);
+      out.print(F(",\"lastUpTimeMs\":"));
+      out.print(state.lastUpDurationMs);
       out.print(F("}"));
     }
     out.print(F("]"));
@@ -945,6 +979,8 @@ String buildStatusJson(bool includeExtendedNodes)
       json += state.peak;
       json += F(",\"sensorNoise\":");
       json += state.noiseFloor;
+      json += F(",\"lastUpTimeMs\":");
+      json += state.lastUpDurationMs;
       json += F("}");
     }
     json += F("]");
