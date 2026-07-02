@@ -73,15 +73,10 @@ Niedrigere CAN-ID gewinnt die Arbitration. Deshalb gelten:
 
 | Nachricht | priority | msg_type | Richtung | Zweck |
 |---|---:|---:|---|---|
-| `HIT_EVENT` | `0b00` | `0x3` | Node -> Zentrale | Treffer sofort melden |
-| `RESULT` | `0b01` | `0x9` | Node -> Zentrale | ACK/NACK für Befehle |
-| `SET_THRESHOLD` | `0b01` | `0x6` | Zentrale -> Node/Broadcast | Schwellwert setzen |
-| `SET_PARAMS` | `0b01` | `0x7` | Zentrale -> Node/Broadcast | Laufzeitparameter setzen |
-| `CMD_FLAP` | `0b01` | `0x8` | Zentrale -> Node/Broadcast | Klappe steuern |
+| `RESULT` | `0b01` | `0x4` | Node -> Zentrale | ACK/NACK für Befehle |
+| `SET_THRESHOLD` | `0b01` | `0x2` | Zentrale -> Node/Broadcast | Schwellwert setzen |
+| `CMD_FLAP` | `0b01` | `0x3` | Zentrale -> Node/Broadcast | Klappe steuern |
 | `HEARTBEAT` | `0b10` | `0x1` | Node -> Zentrale | Lebenszeichen / Zustand |
-| `SENSOR_SUMMARY` | `0b10` | `0x2` | Node -> Zentrale | zyklische Sensorwerte |
-| `SENSOR_WINDOW_BEGIN` | `0b11` | `0x4` | Node -> Zentrale | Start eines Fenster-Transfers |
-| `SENSOR_WINDOW_CHUNK` | `0b11` | `0x5` | Node -> Zentrale | Fragment eines Fenster-Transfers |
 
 Rationale:
 - `HIT_EVENT` hat höchste Priorität, damit Treffer nicht von Debug- oder Statusdaten verdrängt werden.
@@ -128,13 +123,11 @@ CAN-ID: `priority=0b10`, `msg_type=0x1`, `node_id=<source>`
 | 3 | `status_flags` | `u8` | siehe unten |
 | 4..7 | `uptime_s` | `u32` | Sekunden seit Start |
 
-`status_flags`:
-- Bit 0: Klappe oben / bereit
-- Bit 1: Klappe unten / ausgelöst
-- Bit 2: Relais gerade aktiv
-- Bit 3: Sensorfehler erkannt
-- Bit 4: Konfiguration seit Boot geändert
-- Bit 5..7: reserviert
+`status_flags` (aktueller Firmware-Stand):
+- Bit 0: Klappe oben
+- Bit 1: AUTO-Modus aktiv
+- Bit 2: Klappe unten (Relais aktiv)
+- Bit 3..7: reserviert
 
 Empfehlung: alle 500 bis 1000 ms senden.
 
@@ -264,14 +257,13 @@ Ack-Regel:
 
 ### 5.8 `CMD_FLAP`
 
-CAN-ID: `priority=0b01`, `msg_type=0x8`, `node_id=<target oder 0x00 für Broadcast>`
+CAN-ID: `priority=0b01`, `msg_type=0x3`, `node_id=<target oder 0x00 für Broadcast>`
 
 | Byte | Feld | Typ | Beschreibung |
 |---:|---|---|---|
 | 0 | `req_id` | `u8` | Befehls-ID |
-| 1 | `action` | `u8` | `0x00=NOOP`, `0x01=UP`, `0x02=DOWN`, `0x03=TRIGGER` |
-| 2..3 | `override_pulse_ms` | `u16` | `0` = Standardwert aus Parametern |
-| 4..7 | reserviert |  | auf `0` setzen |
+| 1 | `action` | `u8` | `0x00=UP`, `0x01=DOWN`, `0x02=TOGGLE`, `0x03=AUTO`, `0x04=RESET` |
+| 2..7 | reserviert |  | auf `0` setzen |
 
 Ack-Regel:
 - **unicast:** `RESULT` erforderlich
@@ -281,24 +273,23 @@ Ack-Regel:
 
 ### 5.9 `RESULT`
 
-CAN-ID: `priority=0b01`, `msg_type=0x9`, `node_id=<source>`
+CAN-ID: `priority=0b01`, `msg_type=0x4`, `node_id=<source>`
 
 `RESULT` ist die gemeinsame Antwort auf bestätigungspflichtige Befehle.
 
 | Byte | Feld | Typ | Beschreibung |
 |---:|---|---|---|
-| 0 | `req_id` | `u8` | Echo der Befehls-ID |
-| 1 | `msg_type_ack` | `u8` | bestätigter Nachrichtentyp (`0x6`, `0x7`, `0x8`) |
+| 0 | `request_msg_type` | `u8` | bestätigter Nachrichtentyp (`0x2` oder `0x3`) |
+| 1 | `request_id` | `u8` | Echo der Befehls-ID |
 | 2 | `status` | `u8` | siehe Tabelle unten |
-| 3 | `result_flags` | `u8` | reserviert |
-| 4..7 | `detail` | `u32` | optionaler Zusatzwert, sonst `0` |
+| 3 | `data0` | `u8` | optionaler Zusatzwert |
+| 4 | `data1` | `u8` | optionaler Zusatzwert |
+| 5..7 | reserviert |  | aktuell ungenutzt |
 
 `status`:
 - `0x00` = OK / angewendet
 - `0x01` = ungültiger Wert
 - `0x02` = nicht unterstützt
-- `0x03` = Node gerade beschäftigt
-- `0x04` = interner Fehler
 
 Retry-Empfehlung für die Zentrale:
 - Unicast-Befehl senden
