@@ -120,6 +120,20 @@ body {
   background: rgba(255, 255, 255, 0.1);
 }
 
+.flap-card.is-offline {
+  opacity: 0.5;
+  filter: grayscale(0.85);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.flap-card.is-offline:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.flap-card.is-offline .flap-visual {
+  cursor: not-allowed;
+}
+
 .flap-container-wrapper {
   position: relative;
   display: inline-flex;
@@ -218,6 +232,17 @@ body {
 
 .quick-btn:active {
   transform: scale(0.95);
+}
+
+.quick-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.quick-btn:disabled:hover {
+  background: rgba(249, 115, 22, 0.1);
+  border-color: rgba(249, 115, 22, 0.4);
 }
 
 .quick-btn--move {

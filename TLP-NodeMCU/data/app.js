@@ -4,6 +4,9 @@
 
 const LS_KEY = 'tlp_layout';
 const STAGE_HEIGHT_KEY = 'tlp_stage_height';
+const KNOWN_FLAPS_KEY = 'tlp_known_flaps';
+
+let persistedLayout = {};
 
 const state = {
   flaps: [],
@@ -55,14 +58,17 @@ function badge(el, label, modifier) {
 function loadLayout() {
   try {
     const stored = JSON.parse(localStorage.getItem(LS_KEY) || '{}');
-    state.flaps.forEach((f) => {
-      const saved = stored[f.id];
-      if (saved) {
-        f.visualLeft = saved.visualLeft || 0;
-        f.visualTop = saved.visualTop || 0;
-      }
-    });
-  } catch (_) {}
+    persistedLayout = (stored && typeof stored === 'object') ? stored : {};
+  } catch (_) {
+    persistedLayout = {};
+  }
+
+  state.flaps.forEach((f) => {
+    const saved = persistedLayout[f.id];
+    if (!saved) return;
+    f.visualLeft = finiteOr(saved.visualLeft, 0);
+    f.visualTop = finiteOr(saved.visualTop, 0);
+  });
 }
 
 function saveLayout() {
@@ -75,6 +81,31 @@ function saveLayout() {
   });
   try {
     localStorage.setItem(LS_KEY, JSON.stringify(layout));
+    persistedLayout = layout;
+  } catch (_) {}
+}
+
+function saveKnownFlaps() {
+  const knownNodeIds = state.flaps
+    .map((f) => toNodeId(f.nodeId, -1))
+    .filter((id) => id >= 0);
+
+  const uniqueSorted = Array.from(new Set(knownNodeIds)).sort((a, b) => a - b);
+  try {
+    localStorage.setItem(KNOWN_FLAPS_KEY, JSON.stringify(uniqueSorted));
+  } catch (_) {}
+}
+
+function loadKnownFlaps() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(KNOWN_FLAPS_KEY) || '[]');
+    if (!Array.isArray(raw)) return;
+    raw.forEach((value) => {
+      const nodeId = toNodeId(value, -1);
+      if (nodeId >= 0) {
+        ensureFlapModel(nodeId);
+      }
+    });
   } catch (_) {}
 }
 
@@ -110,7 +141,15 @@ function ensureFlapModel(nodeId) {
       visualTop: 0,
       isMoving: false,
     };
+
+    const saved = persistedLayout[flap.id];
+    if (saved) {
+      flap.visualLeft = finiteOr(saved.visualLeft, 0);
+      flap.visualTop = finiteOr(saved.visualTop, 0);
+    }
+
     state.flaps.push(flap);
+    saveKnownFlaps();
   }
   flap.nodeId = nodeId;
   flap.label = nodeLabel(nodeId);
@@ -244,7 +283,19 @@ function renderCard(flap) {
   if (visual) {
     visual.classList.toggle('up', flap.isUp);
     visual.classList.toggle('down', !flap.isUp);
+    visual.setAttribute('aria-disabled', flap.online ? 'false' : 'true');
+    visual.tabIndex = flap.online ? 0 : -1;
   }
+
+  card.classList.toggle('is-offline', !flap.online);
+  if (!flap.online) {
+    card.classList.remove('show-actions');
+  }
+
+  const quickDisabled = !flap.online || flap.commandState === 'pending';
+  card.querySelectorAll('[data-action], [data-move-flap]').forEach((el) => {
+    el.disabled = quickDisabled;
+  });
 
   // Update move button state
   const moveBtn = card.querySelector('[data-move-flap]');
@@ -298,7 +349,9 @@ function parseNodeList(data) {
 function applyStatus(data) {
   const nodes = parseNodeList(data);
   if (nodes !== null) {
-    const keep = new Set();
+    state.flaps.forEach((f) => {
+      f.online = false;
+    });
 
     nodes.forEach((node) => {
       const nodeId = toNodeId(node.id, -1);
@@ -307,7 +360,6 @@ function applyStatus(data) {
       }
 
       const flap = ensureFlapModel(nodeId);
-      keep.add(flap.id);
 
       flap.online = Number(node.online) === 1;
       flap.heartbeat = finiteOr(node.hb, 0);
@@ -331,7 +383,7 @@ function applyStatus(data) {
       flap.lastTriggerAt = finiteOr(node.lastTriggerAt, 0);
     });
 
-    state.flaps = state.flaps.filter((f) => keep.has(f.id));
+    saveKnownFlaps();
 
     if (state.flaps.length === 0) {
       text('connectionStatus', 'Keine Nodes im Status vorhanden');
@@ -371,6 +423,11 @@ document.addEventListener('DOMContentLoaded', () => {
     startY: 0,
     startHeight: 0,
   };
+
+  loadLayout();
+  loadKnownFlaps();
+  render();
+  renderDetailPanel();
 
   if (stage) {
     const savedStageHeight = Number(localStorage.getItem(STAGE_HEIGHT_KEY));
@@ -423,10 +480,11 @@ document.addEventListener('DOMContentLoaded', () => {
     stage.addEventListener('pointerdown', (e) => {
       const moveBtn = e.target.closest('[data-move-flap]');
       if (!moveBtn?.dataset.moveFlapId) return;
+      if (moveBtn.disabled) return;
 
       const flap = state.flaps.find((f) => f.id === moveBtn.dataset.moveFlapId);
       const card = stage.querySelector('[data-flap-id="' + moveBtn.dataset.moveFlapId + '"]');
-      if (!flap || !card) return;
+      if (!flap || !card || !flap.online) return;
 
       e.preventDefault();
       e.stopPropagation();
@@ -512,7 +570,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const visual = target.closest('[data-flap-visual]');
         if (visual?.dataset.flapVisual) {
           const flap = state.flaps.find((f) => f.id === visual.dataset.flapVisual);
-          if (flap) {
+          if (flap && flap.online) {
             const card = target.closest('.flap-card');
             const isAlreadySelected = flap.detailOpen && !!card?.classList.contains('show-actions');
             if (isAlreadySelected) {
@@ -534,6 +592,7 @@ document.addEventListener('DOMContentLoaded', () => {
       // Check if clicking action button
       const actionBtn = target.closest('[data-action]');
       if (actionBtn?.dataset.flapId) {
+        if (actionBtn.disabled) return;
         postFlapAction(actionBtn.dataset.flapId, actionBtn.dataset.action);
         return;
       }
@@ -549,6 +608,10 @@ document.addEventListener('DOMContentLoaded', () => {
       const card = target.closest('.flap-card');
       if (card) {
         const flap = state.flaps.find((f) => f.id === card.dataset.flapId);
+        if (!flap || !flap.online) {
+          card.classList.remove('show-actions');
+          return;
+        }
         const isAlreadySelected = card.classList.contains('show-actions') || !!flap?.detailOpen;
         if (isAlreadySelected) {
           clearSelection();
@@ -574,6 +637,7 @@ document.addEventListener('DOMContentLoaded', () => {
   detailPanel?.addEventListener('click', (e) => {
     const thresholdBtn = e.target.closest('[data-apply-threshold]');
     if (thresholdBtn?.dataset.flapId) {
+      if (thresholdBtn.disabled) return;
       const thresholdInput = qf(detailPanel, 'thresholdInput');
       const nextValue = thresholdInput ? Number(thresholdInput.value) : NaN;
       if (!Number.isFinite(nextValue)) {
@@ -586,6 +650,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const actionBtn = e.target.closest('[data-action]');
     if (actionBtn?.dataset.flapId) {
+      if (actionBtn.disabled) return;
       postFlapAction(actionBtn.dataset.flapId, actionBtn.dataset.action);
     }
   });
@@ -607,5 +672,3 @@ document.addEventListener('DOMContentLoaded', () => {
     postThreshold(openFlap.id, nextValue);
   });
 });
-
-loadLayout();
