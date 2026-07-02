@@ -27,6 +27,7 @@ body {
   display: flex;
   flex-direction: column;
   padding: 22px;
+  padding-bottom: 92px;
 }
 
 .dashboard {
@@ -461,60 +462,79 @@ body {
 }
 
 .network-panel {
-  background: var(--panel);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  border-radius: 16px;
-  padding: 18px;
-  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.32);
-  width: 100%;
-  margin-top: auto;
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: 10px;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(31, 38, 48, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 8px 10px;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.34);
+  width: auto;
+  backdrop-filter: blur(6px);
+  overflow-x: auto;
+  overflow-y: hidden;
+  white-space: nowrap;
 }
 
 .network-panel h2 {
-  font-size: 18px;
+  font-size: 11px;
   color: var(--muted);
-  margin-bottom: 12px;
+  margin-bottom: 0;
+  margin-right: 4px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
+  flex: 0 0 auto;
 }
 
 .status-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 9px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 auto;
 }
 
 .status-item {
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 10px;
-  padding: 10px;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 5px 8px;
+  flex: 0 0 auto;
 }
 
 .status-label {
-  font-size: 11px;
+  font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--muted);
 }
 
 .status-value {
-  margin-top: 4px;
-  font-size: 15px;
+  margin-top: 0;
+  font-size: 12px;
+  line-height: 1;
   font-family: "JetBrains Mono", "Consolas", monospace;
-  overflow-wrap: anywhere;
+  overflow-wrap: normal;
 }
 
 .connection-indicator {
-  margin-top: 12px;
   display: flex;
-  gap: 8px;
+  gap: 6px;
   align-items: center;
-  justify-content: center;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  border-radius: 9px;
-  padding: 9px;
+  justify-content: flex-start;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 5px 8px;
+  flex: 0 0 auto;
 }
 
 .dot {
@@ -531,7 +551,7 @@ body {
 }
 
 .connection-text {
-  font-size: 13px;
+  font-size: 11px;
   color: var(--muted);
 }
 
@@ -551,5 +571,17 @@ body {
 
   .control-row {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .network-panel {
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    padding: 7px 8px;
+    gap: 8px;
+  }
+
+  .network-panel h2 {
+    display: none;
   }
 }
