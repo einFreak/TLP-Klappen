@@ -31,6 +31,7 @@ const uint8_t CAN_MSG_HEARTBEAT = 0x1;
 const uint8_t CAN_MSG_SET_THRESHOLD = 0x2;
 const uint8_t CAN_MSG_FLAP_COMMAND = 0x3;
 const uint8_t CAN_MSG_RESULT = 0x4;
+const uint8_t CAN_MSG_SENSOR_SUMMARY = 0x5;
 
 const uint8_t CAN_RESULT_OK = 0;
 const uint8_t CAN_RESULT_INVALID_ARG = 1;
@@ -50,6 +51,9 @@ int lastBaseline = 0;
 int lastCentered = 0;
 uint8_t eventCounter = 0;
 
+int peakSinceLastReport = 0;
+uint8_t sensorSummaryCounter = 0;
+
 bool flapIsUp = true;
 bool autoModeEnabled = true;
 bool debugStreamingEnabled = true;
@@ -62,6 +66,7 @@ MCP_CAN canController(MCP2515_CS_PIN);
 unsigned long lastHitAtMs = 0;
 unsigned long lastDebugAtMs = 0;
 unsigned long lastHeartbeatAtMs = 0;
+unsigned long lastSensorSummaryAtMs = 0;
 unsigned long bootMs = 0;
 unsigned long burnInStartedAtMs = 0;
 unsigned long lastBurnInLogAtMs = 0;
@@ -142,6 +147,41 @@ void sendHeartbeat(unsigned long nowMs) {
   heartbeatErrorCount++;
   Serial.print(F("CAN HEARTBEAT tx_fail code="));
   Serial.println(txResult);
+}
+
+void sendSensorSummary(unsigned long nowMs) {
+  if (!canNormalModeActive) {
+    return;
+  }
+
+  INT8U payload[8] = {0};
+  
+  // Byte 0..1: current_raw (u16, little endian)
+  payload[0] = static_cast<uint8_t>(lastRaw & 0xFFu);
+  payload[1] = static_cast<uint8_t>((lastRaw >> 8) & 0xFFu);
+  
+  // Byte 2..3: peak since last report (u16, little endian)
+  payload[2] = static_cast<uint8_t>(peakSinceLastReport & 0xFFu);
+  payload[3] = static_cast<uint8_t>((peakSinceLastReport >> 8) & 0xFFu);
+  
+  // Byte 4..5: noise_floor (approximated by lastBaseline) (u16, little endian)
+  payload[4] = static_cast<uint8_t>(lastBaseline & 0xFFu);
+  payload[5] = static_cast<uint8_t>((lastBaseline >> 8) & 0xFFu);
+  
+  // Byte 6: summary_counter
+  payload[6] = sensorSummaryCounter++;
+  
+  // Byte 7: summary_flags (bit 0 = sensor active)
+  payload[7] = 0x01; // Always active
+  
+  peakSinceLastReport = 0; // Reset peak for next report interval
+
+  const INT32U canId = buildCanId(CAN_PRIORITY_CYCLIC, CAN_MSG_SENSOR_SUMMARY, NODE_ID);
+  const INT8U txResult = canController.sendMsgBuf(canId, 0, 8, payload);
+  if (txResult != CAN_OK) {
+    Serial.print(F("CAN SENSOR_SUMMARY tx_fail code="));
+    Serial.println(txResult);
+  }
 }
 
 void sendCanResult(uint8_t requestMsgType, uint8_t requestId, uint8_t status, uint8_t data0, uint8_t data1) {
@@ -574,6 +614,11 @@ void loop() {
   } else if (envelope > 0) {
     envelope -= max(1, envelope >> ENVELOPE_DECAY_SHIFT);
   }
+  
+  // Track peak for SENSOR_SUMMARY reporting
+  if (magnitude > peakSinceLastReport) {
+    peakSinceLastReport = magnitude;
+  }
 
   if (debugStreamingEnabled && nowMs - lastDebugAtMs >= DEBUG_INTERVAL_MS) {
     lastDebugAtMs = nowMs;
@@ -583,6 +628,11 @@ void loop() {
   if (nowMs - lastHeartbeatAtMs >= HEARTBEAT_INTERVAL_MS) {
     lastHeartbeatAtMs = nowMs;
     sendHeartbeat(nowMs);
+  }
+  
+  if (nowMs - lastSensorSummaryAtMs >= HEARTBEAT_INTERVAL_MS) {
+    lastSensorSummaryAtMs = nowMs;
+    sendSensorSummary(nowMs);
   }
 
   printBurnInProgress(nowMs);

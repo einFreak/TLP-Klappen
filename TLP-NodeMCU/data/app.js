@@ -95,6 +95,9 @@ function ensureFlapModel(nodeId) {
       reboots: 0,
       flags: 0,
       uptimeSeconds: 0,
+      sensorRaw: 0,
+      sensorPeak: 0,
+      sensorNoise: 0,
       commandState: 'idle',
       commandText: 'Bereit',
       detailOpen: false,
@@ -203,6 +206,9 @@ function renderCard(flap) {
 
   if (qf(card, 'detailState')) qf(card, 'detailState').textContent = flap.isUp ? 'HOCH' : 'GEFALLEN';
   if (qf(card, 'detailMode')) qf(card, 'detailMode').textContent = flap.mode.toUpperCase();
+  if (qf(card, 'detailSensorRaw')) qf(card, 'detailSensorRaw').textContent = String(flap.sensorRaw);
+  if (qf(card, 'detailSensorPeak')) qf(card, 'detailSensorPeak').textContent = String(flap.sensorPeak);
+  if (qf(card, 'detailSensorNoise')) qf(card, 'detailSensorNoise').textContent = String(flap.sensorNoise);
 
   const cmdStatus = qf(card, 'commandStatus');
   if (cmdStatus) {
@@ -282,6 +288,11 @@ function applyStatus(data) {
       flap.reboots = finiteOr(node.reboots, 0);
       flap.flags = finiteOr(node.flags, 0);
       flap.uptimeSeconds = finiteOr(node.uptimeSeconds, 0);
+
+      // SENSOR_SUMMARY fields from node
+      flap.sensorRaw = finiteOr(node.sensorRaw, flap.sensorRaw);
+      flap.sensorPeak = finiteOr(node.sensorPeak, flap.sensorPeak);
+      flap.sensorNoise = finiteOr(node.sensorNoise, flap.sensorNoise);
 
       flap.isUp = computeNodeFlapState(node);
       flap.mode = (flap.flags & (1 << 1)) !== 0 ? 'auto' : 'manual';

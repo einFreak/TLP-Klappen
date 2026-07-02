@@ -21,12 +21,13 @@ const unsigned long SSE_STREAM_INTERVAL_MS = 4000;
 const uint8_t CAN_RX_MAX_FRAMES_PER_POLL = 6;
 const uint8_t CAN_RX_LOG_EVERY_N = 10;
 const uint16_t STATUS_JSON_RESERVE_COMPACT = 560;
-const uint16_t STATUS_JSON_RESERVE_FULL = 900;
+const uint16_t STATUS_JSON_RESERVE_FULL = 1200;
 const unsigned long NODE_HEARTBEAT_TIMEOUT_MS = 3500;
 const uint8_t TLP_CAN_MSG_HEARTBEAT = 0x1;
 const uint8_t TLP_CAN_MSG_SET_THRESHOLD = 0x2;
 const uint8_t TLP_CAN_MSG_FLAP_COMMAND = 0x3;
 const uint8_t TLP_CAN_MSG_RESULT = 0x4;
+const uint8_t TLP_CAN_MSG_SENSOR_SUMMARY = 0x5;
 const uint8_t TLP_CAN_PRIORITY_COMMAND = 0b01;
 const uint8_t TLP_CAN_PRIORITY_CYCLIC = 0b10;
 const uint8_t TLP_CAN_MAX_NODES = 32;
@@ -114,6 +115,12 @@ struct NodeState
   uint32_t rebootCount;
   unsigned long lastHeartbeatAtMs;
   uint32_t heartbeatCount;
+  // SENSOR_SUMMARY fields
+  uint16_t currentRaw;
+  uint16_t peak;
+  uint16_t noiseFloor;
+  uint8_t sensorSummaryCounter;
+  unsigned long lastSensorSummaryAtMs;
 };
 
 NodeState nodeStates[TLP_CAN_MAX_NODES] = {};
@@ -338,6 +345,37 @@ void updateNodeHeartbeat(uint8_t parsedPriority, uint8_t nodeId, const INT8U *rx
   const bool remoteAutoMode = (state.statusFlags & (1u << 1)) != 0;
   flapIsUp = !remoteRelayPulseActive;
   manualOverrideEnabled = !remoteAutoMode;
+}
+
+void updateNodeSensorSummary(uint8_t parsedPriority, uint8_t nodeId, const INT8U *rxData, INT8U rxLen, unsigned long nowMs)
+{
+  if (rxLen < 8)
+  {
+    return;
+  }
+
+  NodeState &state = getNodeState(nodeId);
+  state.seen = true;
+  state.nodeId = nodeId;
+  state.lastPriority = parsedPriority;
+  state.lastMsgType = TLP_CAN_MSG_SENSOR_SUMMARY;
+
+  // Byte 0..1: current_raw (u16, little endian)
+  state.currentRaw = static_cast<uint16_t>(rxData[0]) |
+                     (static_cast<uint16_t>(rxData[1]) << 8);
+
+  // Byte 2..3: peak (u16, little endian)
+  state.peak = static_cast<uint16_t>(rxData[2]) |
+               (static_cast<uint16_t>(rxData[3]) << 8);
+
+  // Byte 4..5: noise_floor (u16, little endian)
+  state.noiseFloor = static_cast<uint16_t>(rxData[4]) |
+                     (static_cast<uint16_t>(rxData[5]) << 8);
+
+  // Byte 6: summary_counter
+  state.sensorSummaryCounter = rxData[6];
+
+  state.lastSensorSummaryAtMs = nowMs;
 }
 
 const __FlashStringHelper *canClockToText(INT8U clockSel)
@@ -567,6 +605,10 @@ void pollCanFrames()
     if (parsedMsgType == TLP_CAN_MSG_HEARTBEAT)
     {
       updateNodeHeartbeat(parsedPriority, parsedNodeId, rxData, rxLen, nowMs);
+    }
+    else if (parsedMsgType == TLP_CAN_MSG_SENSOR_SUMMARY)
+    {
+      updateNodeSensorSummary(parsedPriority, parsedNodeId, rxData, rxLen, nowMs);
     }
     else if (parsedMsgType == TLP_CAN_MSG_RESULT)
     {
@@ -866,6 +908,12 @@ String buildStatusJson(bool includeExtendedNodes)
       json += state.statusFlags;
       json += F(",\"uptimeSeconds\":");
       json += state.uptimeSeconds;
+      json += F(",\"sensorRaw\":");
+      json += state.currentRaw;
+      json += F(",\"sensorPeak\":");
+      json += state.peak;
+      json += F(",\"sensorNoise\":");
+      json += state.noiseFloor;
       json += F("}");
     }
     json += F("]");
