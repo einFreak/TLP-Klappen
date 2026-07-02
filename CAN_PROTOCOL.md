@@ -73,10 +73,11 @@ Niedrigere CAN-ID gewinnt die Arbitration. Deshalb gelten:
 
 | Nachricht | priority | msg_type | Richtung | Zweck |
 |---|---:|---:|---|---|
-| `RESULT` | `0b01` | `0x4` | Node -> Zentrale | ACK/NACK für Befehle |
-| `SET_THRESHOLD` | `0b01` | `0x2` | Zentrale -> Node/Broadcast | Schwellwert setzen |
-| `CMD_FLAP` | `0b01` | `0x3` | Zentrale -> Node/Broadcast | Klappe steuern |
 | `HEARTBEAT` | `0b10` | `0x1` | Node -> Zentrale | Lebenszeichen / Zustand |
+| `SET_THRESHOLD` | `0b01` | `0x2` | Zentrale -> Node/Broadcast | Schwellwert setzen |
+| `CMD_FLAP` | `0b01` | `0x3` | Zentrale -> Node/Broadcast | Klappe steuern (UP/DOWN/TOGGLE/AUTO/RESET) |
+| `RESULT` | `0b01` | `0x4` | Node -> Zentrale | ACK/NACK für Befehle |
+| `SENSOR_SUMMARY` | `0b10` | `0x5` | Node -> Zentrale | Sensor-Rohwerte für Threshold-Optimierung |
 
 Rationale:
 - `HIT_EVENT` hat höchste Priorität, damit Treffer nicht von Debug- oder Statusdaten verdrängt werden.
@@ -137,97 +138,38 @@ Ack-Regel: **kein ACK**
 
 ### 5.2 `SENSOR_SUMMARY`
 
-CAN-ID: `priority=0b10`, `msg_type=0x2`, `node_id=<source>`
+CAN-ID: `priority=0b10`, `msg_type=0x5`, `node_id=<source>`
+
+Diese Nachricht übermittelt Sensor-Statistiken für Monitoring und Threshold-Optimierung.
 
 | Byte | Feld | Typ | Beschreibung |
 |---:|---|---|---|
-| 0..1 | `peak` | `u16` | Peak-Wert seit letztem Report |
-| 2..3 | `rms` | `u16` | RMS- oder Energie-Maß |
-| 4..5 | `noise_floor` | `u16` | geschätztes Grundrauschen |
+| 0..1 | `current_raw` | `u16` | aktueller Sensor-Rohwert (ADC oder vorverarbeitet) |
+| 2..3 | `peak` | `u16` | Peak-Wert seit letztem Report |
+| 4..5 | `noise_floor` | `u16` | geschätztes Grundrauschen oder RMS |
 | 6 | `summary_counter` | `u8` | laufender Report-Zähler |
-| 7 | `summary_flags` | `u8` | reserviert für spätere Erweiterungen |
+| 7 | `summary_flags` | `u8` | Bit 0 = Sensor aktiv / bereit |
 
-Empfehlung: alle 20 bis 50 ms oder langsamer, falls Buslast reduziert werden soll.
+**Zweck der Felder für Threshold-Optimierung:**
+- `current_raw`: Echtzeit-Messwert zum Beobachten des Noise-Pegels
+- `peak`: Maximum seit letztem Report – hilft zu erkennen, ob echte Events vorhanden sind
+- `noise_floor`: Basis-Pegel für ruhige Zeiten – Threshold sollte deutlich über diesem Wert liegen
+- Empfehlter Threshold: `noise_floor * 2` bis `noise_floor * 3`
 
-Ack-Regel: **kein ACK**
-
----
-
-### 5.3 `HIT_EVENT`
-
-CAN-ID: `priority=0b00`, `msg_type=0x3`, `node_id=<source>`
-
-| Byte | Feld | Typ | Beschreibung |
-|---:|---|---|---|
-| 0..1 | `peak` | `u16` | Peak des Trefferereignisses |
-| 2..3 | `threshold` | `u16` | zum Auslösezeitpunkt aktiver Schwellwert |
-| 4..5 | `event_time_ms16` | `u16` | lokaler Millisekunden-Zähler, modulo 65536 |
-| 6 | `event_counter` | `u8` | Ereigniszähler des Nodes |
-| 7 | `event_flags` | `u8` | siehe unten |
-
-`event_flags`:
-- Bit 0: Relais ausgelöst
-- Bit 1: `SENSOR_WINDOW` folgt
-- Bit 2: Event während Refractory-Phase erkannt, aber unterdrückt
-- Bit 3..7: reserviert
-
-Ack-Regel: **kein ACK**
-
-Begründung: Treffer sollen mit minimaler Latenz auf den Bus; der CAN-Layer bestätigt den Frame bereits auf Bit-Ebene.
-
----
-
-### 5.4 `SENSOR_WINDOW_BEGIN`
-
-CAN-ID: `priority=0b11`, `msg_type=0x4`, `node_id=<source>`
-
-Diese Nachricht kündigt einen fragmentierten Fenster-Transfer an.
-
-| Byte | Feld | Typ | Beschreibung |
-|---:|---|---|---|
-| 0 | `window_id` | `u8` | Transfer-ID, eindeutig pro Node modulo 256 |
-| 1 | `sample_format` | `u8` | `0x01 = s8`, andere Werte reserviert |
-| 2 | `sample_count` | `u8` | Anzahl Samples im Fenster |
-| 3 | `chunk_count` | `u8` | Anzahl folgender `SENSOR_WINDOW_CHUNK` Frames |
-| 4..5 | `sample_period_us` | `u16` | Zeit zwischen Samples |
-| 6 | `trigger_index` | `u8` | Sample-Index des Triggers im Fenster |
-| 7 | `related_event_counter` | `u8` | zugehöriger `HIT_EVENT.event_counter`, sonst `0xFF` |
+Empfehlung: alle 500–1000 ms (oder schneller für interaktive Threshold-Kalibrierung in der UI).
 
 Ack-Regel: **kein ACK**
 
 ---
 
-### 5.5 `SENSOR_WINDOW_CHUNK`
+### 5.3 `SET_THRESHOLD`
 
-CAN-ID: `priority=0b11`, `msg_type=0x5`, `node_id=<source>`
-
-Für `sample_format = 0x01` enthält jedes Fragment bis zu 5 Samples als `s8`.
-
-| Byte | Feld | Typ | Beschreibung |
-|---:|---|---|---|
-| 0 | `window_id` | `u8` | muss zu `SENSOR_WINDOW_BEGIN` passen |
-| 1 | `chunk_index` | `u8` | startet bei `0` |
-| 2 | `data_len` | `u8` | Anzahl gültiger Sample-Bytes in diesem Frame (`0..5`) |
-| 3..7 | `data` | Byte[5] | Sample-Bytes, ungenutzte Bytes = `0` |
-
-Chunking-Regeln:
-- `chunk_count = ceil(sample_count / 5)`
-- alle Chunks eines Fensters werden direkt nach `SENSOR_WINDOW_BEGIN` gesendet
-- bei Buskonflikten dürfen Chunks verzögert werden; `HIT_EVENT`, Befehle und Status dürfen sie jederzeit verdrängen
-- fehlt ein Chunk, verwirft die Zentrale das gesamte Fenster nach Timeout
-
-Ack-Regel: **kein ACK**
-
----
-
-### 5.6 `SET_THRESHOLD`
-
-CAN-ID: `priority=0b01`, `msg_type=0x6`, `node_id=<target oder 0x00 für Broadcast>`
+CAN-ID: `priority=0b01`, `msg_type=0x2`, `node_id=<target oder 0x00 für Broadcast>`
 
 | Byte | Feld | Typ | Beschreibung |
 |---:|---|---|---|
 | 0 | `req_id` | `u8` | Befehls-ID für spätere Antwort |
-| 1..2 | `threshold` | `u16` | neuer Auslöseschwellwert |
+| 1..2 | `threshold` | `u16` | neuer Auslöseschwellwert (Rohdaten-Einheiten) |
 | 3 | `apply_flags` | `u8` | Bit 0 = persistent speichern |
 | 4..7 | reserviert |  | auf `0` setzen |
 
@@ -235,27 +177,11 @@ Ack-Regel:
 - **unicast:** `RESULT` erforderlich
 - **broadcast:** kein ACK
 
----
-
-### 5.7 `SET_PARAMS`
-
-CAN-ID: `priority=0b01`, `msg_type=0x7`, `node_id=<target oder 0x00 für Broadcast>`
-
-| Byte | Feld | Typ | Beschreibung |
-|---:|---|---|---|
-| 0 | `req_id` | `u8` | Befehls-ID |
-| 1..2 | `refractory_ms` | `u16` | Sperrzeit nach Treffer |
-| 3..4 | `relay_pulse_ms` | `u16` | Relais-Pulsdauer |
-| 5..6 | `report_interval_ms` | `u16` | Sendeintervall für `SENSOR_SUMMARY` |
-| 7 | `apply_flags` | `u8` | Bit 0 = persistent speichern |
-
-Ack-Regel:
-- **unicast:** `RESULT` erforderlich
-- **broadcast:** kein ACK
+Hinweis: Mit `SENSOR_SUMMARY` (msg_type 0x5) bekommst du `current_raw`, `peak` und `noise_floor` übermittelt. Empfohlene Threshold-Formel: `noise_floor * 2` bis `noise_floor * 3`.
 
 ---
 
-### 5.8 `CMD_FLAP`
+### 5.4 `CMD_FLAP`
 
 CAN-ID: `priority=0b01`, `msg_type=0x3`, `node_id=<target oder 0x00 für Broadcast>`
 
@@ -271,7 +197,7 @@ Ack-Regel:
 
 ---
 
-### 5.9 `RESULT`
+### 5.5 `RESULT`
 
 CAN-ID: `priority=0b01`, `msg_type=0x4`, `node_id=<source>`
 
@@ -312,30 +238,32 @@ Kompatibilitätsregeln:
 - Empfänger müssen unbekannte reservierte Bits ignorieren
 - Sender dürfen reservierte Felder nur mit `0` senden, solange sie nicht offiziell definiert sind
 
-Empfehlung für erste Implementierung:
-- dieses Dokument definiert **`proto_major = 1`, `proto_minor = 0`**
+Empfehlung für aktuelle Implementierung:
+- dieses Dokument definiert **`proto_major = 1`, `proto_minor = 1`**
+- `proto_minor = 1` = `SENSOR_SUMMARY` hinzugefügt für Threshold-Kalibrierung
 
 ---
 
 ## 7) Praktische Implementierungshinweise
 
-- Nur `HIT_EVENT` sollte wirklich latenzkritisch behandelt werden.
-- `SENSOR_WINDOW` nur bei Bedarf senden, z. B. für Kalibrierung oder Debug.
+- Der Node sendet `HEARTBEAT` alle 500–1000 ms für Zustandsüberwachung.
+- Der Node sendet `SENSOR_SUMMARY` alle 500–1000 ms mit Rohwerten für interaktive Threshold-Optimierung.
+- Die zentrale UI nutzt `SENSOR_SUMMARY` (`current_raw`, `peak`, `noise_floor`), um dem Benutzer beim Schwellwert-Setzen zu helfen.
+- `CMD_FLAP` und `SET_THRESHOLD` sind Befehle mit `RESULT`-Quittierung.
 - Broadcast eignet sich für Startkonfiguration, aber nicht für sichere Quittierung.
-- Die Zentrale sollte pro Node den letzten `summary_counter`, `event_counter` und `window_id` mitführen, um Lücken zu erkennen.
-- Ein Node darf empfangene Broadcast-Befehle lokal filtern, muss sie aber identisch zu Unicast anwenden.
+- Die Zentrale sollte pro Node den letzten `summary_counter` von `SENSOR_SUMMARY` mitführen, um Lücken zu erkennen.
 
 ---
 
-## 8) Minimaler Soll-Umfang für künftige Implementierungen
+## 8) Implementierter Nachrichtenumfang
 
-Ein erster Node-Firmwarestand sollte mindestens unterstützen:
-- `HEARTBEAT`
-- `SENSOR_SUMMARY`
-- `HIT_EVENT`
-- `SET_THRESHOLD`
-- `SET_PARAMS`
-- `CMD_FLAP`
-- `RESULT`
+Die aktuelle Firmware unterstützt:
+- ✓ `HEARTBEAT` – Lebenszeichen / Zustand
+- ✓ `SENSOR_SUMMARY` – Sensor-Rohwerte (current_raw, peak, noise_floor) für Threshold-Kalibrierung
+- ✓ `SET_THRESHOLD` – Auslöseschwellwert setzen
+- ✓ `CMD_FLAP` – Klappe steuern (UP/DOWN/TOGGLE/AUTO/RESET)
+- ✓ `RESULT` – Bestätigung für Befehle
 
-`SENSOR_WINDOW_BEGIN` und `SENSOR_WINDOW_CHUNK` bleiben optional, aber wenn implementiert, dann genau nach dieser Spezifikation.
+Zukünftige Erweiterungen (reserviert):
+- `HIT_EVENT` (msg_type 0x6) – optionales Treffer-Event mit Peak + Timestamp
+- `SENSOR_WINDOW_BEGIN` / `SENSOR_WINDOW_CHUNK` (msg_types 0x7, 0x8) – fragmentierte Sensor-Fenster für Debugging
