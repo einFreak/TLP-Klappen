@@ -2,7 +2,6 @@
 // TLP-Klappen Dashboard - Multi-Node State & Rendering
 // ============================================================
 
-const DEFAULT_NODE_ID = 0x11;
 const LS_KEY = 'tlp_layout';
 
 const state = {
@@ -11,7 +10,17 @@ const state = {
   connected: false,
 };
 
-function toNodeId(value, fallback = DEFAULT_NODE_ID) {
+function finiteOr(value, fallback) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function parseTriggerValue(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : -1;
+}
+
+function toNodeId(value, fallback = -1) {
   const n = Number(value);
   if (!Number.isFinite(n)) return fallback;
   const i = Math.trunc(n);
@@ -86,6 +95,8 @@ function ensureFlapModel(nodeId) {
       reboots: 0,
       flags: 0,
       uptimeSeconds: 0,
+      commandState: 'idle',
+      commandText: 'Bereit',
       detailOpen: false,
     };
     state.flaps.push(flap);
@@ -133,6 +144,28 @@ function setCardBusy(card, busy) {
   });
 }
 
+function setFlapCommandState(flapId, commandState, commandText) {
+  const flap = state.flaps.find((f) => f.id === flapId);
+  if (!flap) return;
+  flap.commandState = commandState;
+  flap.commandText = commandText;
+  renderCard(flap);
+}
+
+function applyCardInteractivity(card, flap) {
+  if (!card || !flap) return;
+  const forceDisable = !flap.online || flap.commandState === 'pending';
+  card.querySelectorAll('[data-action], [data-apply-threshold]').forEach((el) => {
+    el.disabled = forceDisable;
+  });
+}
+
+function formatTriggerAt(value) {
+  const ms = finiteOr(value, 0);
+  if (ms <= 0) return '-';
+  return String(ms) + ' ms';
+}
+
 function renderCard(flap) {
   const stage = document.getElementById('flapStage');
   if (!stage) return;
@@ -178,7 +211,18 @@ function renderCard(flap) {
   if (qf(card, 'detailMode')) qf(card, 'detailMode').textContent = flap.mode.toUpperCase();
   if (qf(card, 'detailTriggerRaw')) qf(card, 'detailTriggerRaw').textContent = flap.lastTriggerRaw >= 0 ? flap.lastTriggerRaw : '-';
   if (qf(card, 'detailTriggerEnvelope')) qf(card, 'detailTriggerEnvelope').textContent = flap.lastTriggerEnvelope >= 0 ? flap.lastTriggerEnvelope : '-';
-  if (qf(card, 'detailTriggerAt')) qf(card, 'detailTriggerAt').textContent = flap.lastTriggerAt > 0 ? String(flap.lastTriggerAt) + ' ms' : '-';
+  if (qf(card, 'detailTriggerAt')) qf(card, 'detailTriggerAt').textContent = formatTriggerAt(flap.lastTriggerAt);
+
+  const cmdStatus = qf(card, 'commandStatus');
+  if (cmdStatus) {
+    cmdStatus.textContent = flap.commandText || 'Bereit';
+    cmdStatus.className = 'command-status';
+    if (flap.commandState === 'pending') cmdStatus.classList.add('command-status--pending');
+    else if (flap.commandState === 'ok') cmdStatus.classList.add('command-status--ok');
+    else if (flap.commandState === 'error') cmdStatus.classList.add('command-status--error');
+  }
+
+  applyCardInteractivity(card, flap);
 
   const rangeEl = qf(card, 'thresholdRange');
   const numEl = qf(card, 'thresholdNumber');
@@ -222,74 +266,49 @@ function computeNodeFlapState(node) {
 }
 
 function parseNodeList(data) {
-  if (Array.isArray(data.nodes) && data.nodes.length > 0) {
-    return data.nodes;
+  if (!Object.prototype.hasOwnProperty.call(data, 'nodes')) {
+    return null;
   }
-
-  if (data.node11 && Number(data.node11.seen) === 1) {
-    return [{
-      id: DEFAULT_NODE_ID,
-      online: Number(data.node11.online) === 1 ? 1 : 0,
-      hb: Number(data.node11.heartbeatCount) || 0,
-      reboots: Number(data.node11.rebootCount) || 0,
-      flags: Number(data.node11.statusFlags) || 0,
-      uptimeSeconds: Number(data.node11.uptimeSeconds) || 0,
-    }];
-  }
-
-  return [];
+  return Array.isArray(data.nodes) ? data.nodes : [];
 }
 
 function applyStatus(data) {
   const nodes = parseNodeList(data);
-  const keep = new Set();
+  if (nodes !== null) {
+    const keep = new Set();
 
-  if (nodes.length === 0) {
-    const fallback = ensureFlapModel(DEFAULT_NODE_ID);
-    keep.add(fallback.id);
-    fallback.isUp = Number(data.flap) === 1;
-    fallback.online = Number(data?.node11?.online) === 1;
-    fallback.mode = data.mode || 'auto';
-    fallback.threshold = Number.isFinite(Number(data.threshold)) ? Number(data.threshold) : fallback.threshold;
-    fallback.raw = Number(data.raw) || 0;
-    fallback.envelope = Number(data.envelope) || 0;
-    fallback.lastTriggerRaw = Number(data.lastTriggerRaw) ?? -1;
-    fallback.lastTriggerEnvelope = Number(data.lastTriggerEnvelope) ?? -1;
-    fallback.lastTriggerAt = Number(data.lastTriggerAt) || 0;
-    fallback.heartbeat = Number(data?.node11?.heartbeatCount) || fallback.heartbeat;
-    fallback.reboots = Number(data?.node11?.rebootCount) || fallback.reboots;
-    fallback.flags = Number(data?.node11?.statusFlags) || 0;
-    fallback.uptimeSeconds = Number(data?.node11?.uptimeSeconds) || 0;
-  } else {
     nodes.forEach((node) => {
-      const nodeId = toNodeId(node.id, DEFAULT_NODE_ID);
+      const nodeId = toNodeId(node.id, -1);
+      if (nodeId < 0) {
+        return;
+      }
+
       const flap = ensureFlapModel(nodeId);
       keep.add(flap.id);
 
       flap.online = Number(node.online) === 1;
-      flap.heartbeat = Number(node.hb) || 0;
-      flap.reboots = Number(node.reboots) || 0;
-      flap.flags = Number(node.flags) || 0;
-      flap.uptimeSeconds = Number(node.uptimeSeconds) || 0;
+      flap.heartbeat = finiteOr(node.hb, 0);
+      flap.reboots = finiteOr(node.reboots, 0);
+      flap.flags = finiteOr(node.flags, 0);
+      flap.uptimeSeconds = finiteOr(node.uptimeSeconds, 0);
 
       flap.isUp = computeNodeFlapState(node);
       flap.mode = (flap.flags & (1 << 1)) !== 0 ? 'auto' : 'manual';
 
-      if (nodeId === DEFAULT_NODE_ID) {
-        flap.threshold = Number.isFinite(Number(data.threshold)) ? Number(data.threshold) : flap.threshold;
-        flap.raw = Number(data.raw) || 0;
-        flap.envelope = Number(data.envelope) || 0;
-        flap.lastTriggerRaw = Number(data.lastTriggerRaw) ?? -1;
-        flap.lastTriggerEnvelope = Number(data.lastTriggerEnvelope) ?? -1;
-        flap.lastTriggerAt = Number(data.lastTriggerAt) || 0;
-      } else {
-        flap.lastTriggerRaw = -1;
-        flap.lastTriggerEnvelope = -1;
-        flap.lastTriggerAt = 0;
-      }
+      // Trigger fields are now only taken from node-scoped payload fields.
+      flap.threshold = finiteOr(node.threshold, flap.threshold);
+      flap.raw = finiteOr(node.raw, flap.raw);
+      flap.envelope = finiteOr(node.envelope, flap.envelope);
+      flap.lastTriggerRaw = parseTriggerValue(node.lastTriggerRaw);
+      flap.lastTriggerEnvelope = parseTriggerValue(node.lastTriggerEnvelope);
+      flap.lastTriggerAt = finiteOr(node.lastTriggerAt, 0);
     });
 
     state.flaps = state.flaps.filter((f) => keep.has(f.id));
+
+    if (state.flaps.length === 0) {
+      text('connectionStatus', 'Keine Nodes im Status vorhanden');
+    }
   }
 
   state.network = {
@@ -326,10 +345,19 @@ async function waitForCommandResult(requestId, timeoutMs = 1500) {
 async function postFlapAction(flapId, action) {
   const stage = document.getElementById('flapStage');
   const card = stage && stage.querySelector('[data-flap-id="' + flapId + '"]');
-  const nodeId = toNodeId(card ? card.dataset.nodeId : DEFAULT_NODE_ID);
+  const nodeId = toNodeId(card ? card.dataset.nodeId : -1);
 
+  setFlapCommandState(flapId, 'pending', 'Sende Befehl...');
   setCardBusy(card, true);
   try {
+    if (!card || card.dataset.nodeId === undefined || nodeId < 0) {
+      throw new Error('node not found');
+    }
+
+    if (!state.flaps.find((f) => f.id === flapId)?.online) {
+      throw new Error('node offline');
+    }
+
     const res = await fetch('/api/flap?action=' + encodeURIComponent(action) + '&node=' + encodeURIComponent(nodeId), { method: 'POST' });
     if (!res.ok) throw new Error('flap action send failed');
 
@@ -343,10 +371,12 @@ async function postFlapAction(flapId, action) {
       throw new Error('flap action rejected: ' + result.state);
     }
 
+    setFlapCommandState(flapId, 'ok', 'Aktion bestaetigt');
     updateStatus();
     text('connectionStatus', 'Aktion fuer Node ' + nodeId + ' ausgefuehrt');
   } catch (err) {
     console.error(err);
+    setFlapCommandState(flapId, 'error', 'Aktion fehlgeschlagen');
     text('connectionStatus', 'Aktion fehlgeschlagen');
   } finally {
     setCardBusy(card, false);
@@ -356,10 +386,19 @@ async function postFlapAction(flapId, action) {
 async function postThreshold(flapId, value) {
   const stage = document.getElementById('flapStage');
   const card = stage && stage.querySelector('[data-flap-id="' + flapId + '"]');
-  const nodeId = toNodeId(card ? card.dataset.nodeId : DEFAULT_NODE_ID);
+  const nodeId = toNodeId(card ? card.dataset.nodeId : -1);
 
+  setFlapCommandState(flapId, 'pending', 'Setze Schwellwert...');
   setCardBusy(card, true);
   try {
+    if (!card || card.dataset.nodeId === undefined || nodeId < 0) {
+      throw new Error('node not found');
+    }
+
+    if (!state.flaps.find((f) => f.id === flapId)?.online) {
+      throw new Error('node offline');
+    }
+
     const v = Math.max(0, Math.min(1023, Number(value) || 0));
     const res = await fetch('/api/threshold?value=' + encodeURIComponent(v) + '&node=' + encodeURIComponent(nodeId), { method: 'POST' });
     if (!res.ok) throw new Error('threshold update send failed');
@@ -374,10 +413,12 @@ async function postThreshold(flapId, value) {
       throw new Error('threshold rejected: ' + result.state);
     }
 
+    setFlapCommandState(flapId, 'ok', 'Schwellwert bestaetigt');
     updateStatus();
     text('connectionStatus', 'Schwellwert fuer Node ' + nodeId + ' gesetzt');
   } catch (err) {
     console.error(err);
+    setFlapCommandState(flapId, 'error', 'Schwellwert fehlgeschlagen');
     text('connectionStatus', 'Schwellwert fehlgeschlagen');
   } finally {
     setCardBusy(card, false);
@@ -490,7 +531,6 @@ function connectSSE() {
   };
 }
 
-ensureFlapModel(DEFAULT_NODE_ID);
 loadLayout();
 updateStatus();
 connectSSE();
