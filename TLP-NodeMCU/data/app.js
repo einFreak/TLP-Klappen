@@ -3,6 +3,7 @@
 // ============================================================
 
 const LS_KEY = 'tlp_layout';
+const STAGE_HEIGHT_KEY = 'tlp_stage_height';
 
 const state = {
   flaps: [],
@@ -338,14 +339,160 @@ function applyStatus(data) {
 
 document.addEventListener('DOMContentLoaded', () => {
   const stage = document.getElementById('flapStage');
+  const stageResizeHandle = document.getElementById('flapStageResizeHandle');
   const detailPanel = document.getElementById('detailPanel');
   const closeBtn = document.getElementById('closeDetailBtn');
 
+  const dragState = {
+    flapId: null,
+    pointerId: null,
+    startX: 0,
+    startY: 0,
+    startLeft: 0,
+    startTop: 0,
+  };
+
+  const stageResizeState = {
+    active: false,
+    pointerId: null,
+    startY: 0,
+    startHeight: 0,
+  };
+
+  if (stage) {
+    const savedStageHeight = Number(localStorage.getItem(STAGE_HEIGHT_KEY));
+    if (Number.isFinite(savedStageHeight) && savedStageHeight >= 220) {
+      stage.style.height = String(Math.round(savedStageHeight)) + 'px';
+    }
+  }
+
+  if (stage && stageResizeHandle) {
+    stageResizeHandle.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      stageResizeState.active = true;
+      stageResizeState.pointerId = e.pointerId;
+      stageResizeState.startY = e.clientY;
+      stageResizeState.startHeight = stage.getBoundingClientRect().height;
+      if (typeof stageResizeHandle.setPointerCapture === 'function') {
+        stageResizeHandle.setPointerCapture(e.pointerId);
+      }
+    });
+
+    const resizeStage = (e) => {
+      if (!stageResizeState.active || stageResizeState.pointerId !== e.pointerId) return;
+      e.preventDefault();
+
+      const delta = e.clientY - stageResizeState.startY;
+      const minHeight = 220;
+      const maxHeight = Math.max(minHeight, window.innerHeight - 220);
+      const nextHeight = Math.max(minHeight, Math.min(maxHeight, Math.round(stageResizeState.startHeight + delta)));
+      stage.style.height = String(nextHeight) + 'px';
+    };
+
+    const finishResize = (e) => {
+      if (!stageResizeState.active || stageResizeState.pointerId !== e.pointerId) return;
+      stageResizeState.active = false;
+      stageResizeState.pointerId = null;
+
+      const finalHeight = Math.round(stage.getBoundingClientRect().height);
+      try {
+        localStorage.setItem(STAGE_HEIGHT_KEY, String(finalHeight));
+      } catch (_) {}
+    };
+
+    stageResizeHandle.addEventListener('pointermove', resizeStage);
+    stageResizeHandle.addEventListener('pointerup', finishResize);
+    stageResizeHandle.addEventListener('pointercancel', finishResize);
+  }
+
   // Simplified handler for all card interactions
   if (stage) {
+    stage.addEventListener('pointerdown', (e) => {
+      const moveBtn = e.target.closest('[data-move-flap]');
+      if (!moveBtn?.dataset.moveFlapId) return;
+
+      const flap = state.flaps.find((f) => f.id === moveBtn.dataset.moveFlapId);
+      const card = stage.querySelector('[data-flap-id="' + moveBtn.dataset.moveFlapId + '"]');
+      if (!flap || !card) return;
+
+      e.preventDefault();
+      e.stopPropagation();
+
+      // Keep quick actions open while dragging this card.
+      stage.querySelectorAll('.flap-card').forEach((c) => c.classList.remove('show-actions'));
+      card.classList.add('show-actions');
+
+      // Convert the card into absolute positioning at its current visual position.
+      const stageRect = stage.getBoundingClientRect();
+      const cardRect = card.getBoundingClientRect();
+      if (!flap.visualLeft && !flap.visualTop) {
+        flap.visualLeft = Math.max(0, Math.round(cardRect.left - stageRect.left + stage.scrollLeft));
+        flap.visualTop = Math.max(0, Math.round(cardRect.top - stageRect.top + stage.scrollTop));
+      }
+
+      flap.isMoving = true;
+      renderCard(flap);
+
+      dragState.flapId = flap.id;
+      dragState.pointerId = e.pointerId;
+      dragState.startX = e.clientX;
+      dragState.startY = e.clientY;
+      dragState.startLeft = flap.visualLeft || 0;
+      dragState.startTop = flap.visualTop || 0;
+
+      if (typeof moveBtn.setPointerCapture === 'function') {
+        moveBtn.setPointerCapture(e.pointerId);
+      }
+    });
+
+    stage.addEventListener('pointermove', (e) => {
+      if (!dragState.flapId || dragState.pointerId !== e.pointerId) return;
+
+      const flap = state.flaps.find((f) => f.id === dragState.flapId);
+      const card = stage.querySelector('[data-flap-id="' + dragState.flapId + '"]');
+      if (!flap || !card) return;
+
+      e.preventDefault();
+
+      const dx = e.clientX - dragState.startX;
+      const dy = e.clientY - dragState.startY;
+      const newLeft = Math.max(0, Math.round(dragState.startLeft + dx));
+      const newTop = Math.max(0, Math.round(dragState.startTop + dy));
+
+      flap.visualLeft = newLeft;
+      flap.visualTop = newTop;
+
+      card.style.position = 'absolute';
+      card.style.left = newLeft + 'px';
+      card.style.top = newTop + 'px';
+    });
+
+    const finishDrag = (e) => {
+      if (!dragState.flapId || dragState.pointerId !== e.pointerId) return;
+
+      const flap = state.flaps.find((f) => f.id === dragState.flapId);
+      if (flap) {
+        flap.isMoving = false;
+        renderCard(flap);
+        saveLayout();
+      }
+
+      dragState.flapId = null;
+      dragState.pointerId = null;
+    };
+
+    stage.addEventListener('pointerup', finishDrag);
+    stage.addEventListener('pointercancel', finishDrag);
+
     stage.addEventListener('click', (e) => {
       e.stopPropagation();
       const target = e.target;
+
+      const clearSelection = () => {
+        stage.querySelectorAll('.flap-card').forEach((c) => c.classList.remove('show-actions'));
+        state.flaps.forEach((f) => { f.detailOpen = false; });
+        renderDetailPanel();
+      };
 
       // Check if clicking on SVG - open detail
       if (target.closest('.flap-svg')) {
@@ -354,6 +501,12 @@ document.addEventListener('DOMContentLoaded', () => {
           const flap = state.flaps.find((f) => f.id === visual.dataset.flapVisual);
           if (flap) {
             const card = target.closest('.flap-card');
+            const isAlreadySelected = flap.detailOpen && !!card?.classList.contains('show-actions');
+            if (isAlreadySelected) {
+              clearSelection();
+              return;
+            }
+
             if (card) {
               stage.querySelectorAll('.flap-card').forEach((c) => c.classList.remove('show-actions'));
               card.classList.add('show-actions');
@@ -375,21 +528,20 @@ document.addEventListener('DOMContentLoaded', () => {
       // Check if clicking move button
       const moveBtn = target.closest('[data-move-flap]');
       if (moveBtn?.dataset.moveFlapId) {
-        const flap = state.flaps.find((f) => f.id === moveBtn.dataset.moveFlapId);
-        if (flap) {
-          flap.isMoving = !flap.isMoving;
-          renderCard(flap);
-          if (flap.isMoving) {
-            const card = stage.querySelector('[data-flap-id="' + flap.id + '"]');
-            setupCardDrag(moveBtn, card, flap);
-          }
-        }
+        // Drag is handled by pointer events above.
         return;
       }
 
       // Default: show/hide buttons on card click
       const card = target.closest('.flap-card');
       if (card) {
+        const flap = state.flaps.find((f) => f.id === card.dataset.flapId);
+        const isAlreadySelected = card.classList.contains('show-actions') || !!flap?.detailOpen;
+        if (isAlreadySelected) {
+          clearSelection();
+          return;
+        }
+
         stage.querySelectorAll('.flap-card').forEach((c) => c.classList.remove('show-actions'));
         card.classList.add('show-actions');
       }
@@ -413,45 +565,5 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 });
-
-function setupCardDrag(moveBtn, card, flap) {
-  let isDragging = false;
-  let startX, startY, startLeft, startTop;
-
-  const onMouseDown = (e) => {
-    if (!flap.isMoving) return;
-    e.preventDefault();
-    isDragging = true;
-    startX = e.clientX;
-    startY = e.clientY;
-    startLeft = flap.visualLeft || 0;
-    startTop = flap.visualTop || 0;
-
-    const onMouseMove = (e) => {
-      if (!isDragging) return;
-      const dx = e.clientX - startX;
-      const dy = e.clientY - startY;
-      const newLeft = Math.max(0, startLeft + dx);
-      const newTop = Math.max(0, startTop + dy);
-      card.style.position = 'absolute';
-      card.style.left = newLeft + 'px';
-      card.style.top = newTop + 'px';
-    };
-
-    const onMouseUp = () => {
-      isDragging = false;
-      document.removeEventListener('mousemove', onMouseMove);
-      document.removeEventListener('mouseup', onMouseUp);
-      flap.visualLeft = parseInt(card.style.left) || 0;
-      flap.visualTop = parseInt(card.style.top) || 0;
-      saveLayout();
-    };
-
-    document.addEventListener('mousemove', onMouseMove);
-    document.addEventListener('mouseup', onMouseUp);
-  };
-
-  moveBtn.addEventListener('mousedown', onMouseDown);
-}
 
 loadLayout();
