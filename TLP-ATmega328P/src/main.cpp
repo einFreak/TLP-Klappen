@@ -19,7 +19,6 @@ const uint8_t BASELINE_FILTER_SHIFT = 4;
 const uint8_t ENVELOPE_DECAY_SHIFT = 2;
 
 const unsigned long DEBUG_INTERVAL_MS = 100;
-const unsigned long RELAY_PULSE_MS = 120;
 const unsigned long REFRACTORY_MS = 220;
 const unsigned long HEARTBEAT_INTERVAL_MS = 1000;
 const unsigned long HEARTBEAT_INFO_LOG_EVERY = 10;
@@ -51,7 +50,8 @@ int lastBaseline = 0;
 int lastCentered = 0;
 uint8_t eventCounter = 0;
 
-bool relayPulseActive = false;
+bool flapIsUp = true;
+bool autoModeEnabled = true;
 bool debugStreamingEnabled = true;
 bool canControllerDetected = false;
 bool canLoopbackPassed = false;
@@ -59,7 +59,6 @@ bool canNormalModeActive = false;
 
 MCP_CAN canController(MCP2515_CS_PIN);
 
-unsigned long relayOffAtMs = 0;
 unsigned long lastHitAtMs = 0;
 unsigned long lastDebugAtMs = 0;
 unsigned long lastHeartbeatAtMs = 0;
@@ -72,8 +71,7 @@ uint32_t heartbeatErrorCount = 0;
 
 INT8U detectedCanClock = MCP_8MHZ;
 
-void startRelayPulse(unsigned long nowMs);
-void stopRelayPulse();
+void setFlapState(bool isUp);
 
 uint16_t buildCanId(uint8_t priority, uint8_t msgType, uint8_t nodeId) {
   return (static_cast<uint16_t>(priority & 0x03) << 9) |
@@ -84,10 +82,13 @@ uint16_t buildCanId(uint8_t priority, uint8_t msgType, uint8_t nodeId) {
 uint8_t buildStatusFlags() {
   uint8_t flags = 0;
 
-  if (!relayPulseActive) {
+  if (flapIsUp) {
     flags |= (1u << 0);
   }
-  if (relayPulseActive) {
+  if (autoModeEnabled) {
+    flags |= (1u << 1);
+  }
+  if (!flapIsUp) {
     flags |= (1u << 2);
   }
 
@@ -157,7 +158,7 @@ void sendCanResult(uint8_t requestMsgType, uint8_t requestId, uint8_t status, ui
   }
 }
 
-void handleCanCommand(unsigned long nowMs, uint8_t msgType, const INT8U* payload, INT8U payloadLen) {
+void handleCanCommand(uint8_t msgType, const INT8U* payload, INT8U payloadLen) {
   const uint8_t requestId = payloadLen >= 1 ? payload[0] : 0;
 
   if (msgType == CAN_MSG_SET_THRESHOLD) {
@@ -190,25 +191,45 @@ void handleCanCommand(unsigned long nowMs, uint8_t msgType, const INT8U* payload
 
     const uint8_t action = payload[1];
     if (action == CAN_FLAP_UP) {
-      stopRelayPulse();
+      setFlapState(true);
+      autoModeEnabled = false;
       Serial.println(F("CAN CMD flap=up"));
-      sendCanResult(CAN_MSG_FLAP_COMMAND, requestId, CAN_RESULT_OK, action, 0);
+      sendCanResult(CAN_MSG_FLAP_COMMAND, requestId, CAN_RESULT_OK, action, flapIsUp ? 1 : 0);
       return;
     }
 
-    if (action == CAN_FLAP_DOWN || action == CAN_FLAP_TOGGLE) {
-      startRelayPulse(nowMs);
-      Serial.println(F("CAN CMD flap=pulse"));
-      sendCanResult(CAN_MSG_FLAP_COMMAND, requestId, CAN_RESULT_OK, action, 0);
+    if (action == CAN_FLAP_DOWN) {
+      setFlapState(false);
+      autoModeEnabled = false;
+      Serial.println(F("CAN CMD flap=down"));
+      sendCanResult(CAN_MSG_FLAP_COMMAND, requestId, CAN_RESULT_OK, action, flapIsUp ? 1 : 0);
       return;
     }
 
-    if (action == CAN_FLAP_AUTO || action == CAN_FLAP_RESET) {
-      if (action == CAN_FLAP_RESET) {
-        eventCounter = 0;
-      }
-      Serial.println(F("CAN CMD flap=mode"));
-      sendCanResult(CAN_MSG_FLAP_COMMAND, requestId, CAN_RESULT_OK, action, 0);
+    if (action == CAN_FLAP_TOGGLE) {
+      setFlapState(!flapIsUp);
+      autoModeEnabled = false;
+      Serial.println(F("CAN CMD flap=toggle"));
+      sendCanResult(CAN_MSG_FLAP_COMMAND, requestId, CAN_RESULT_OK, action, flapIsUp ? 1 : 0);
+      return;
+    }
+
+    if (action == CAN_FLAP_AUTO) {
+      autoModeEnabled = true;
+      setFlapState(true);
+      Serial.println(F("CAN CMD flap=auto"));
+      sendCanResult(CAN_MSG_FLAP_COMMAND, requestId, CAN_RESULT_OK, action, flapIsUp ? 1 : 0);
+      return;
+    }
+
+    if (action == CAN_FLAP_RESET) {
+      eventCounter = 0;
+      envelope = 0;
+      lastHitAtMs = 0;
+      autoModeEnabled = true;
+      setFlapState(true);
+      Serial.println(F("CAN CMD flap=reset"));
+      sendCanResult(CAN_MSG_FLAP_COMMAND, requestId, CAN_RESULT_OK, action, flapIsUp ? 1 : 0);
       return;
     }
 
@@ -219,7 +240,7 @@ void handleCanCommand(unsigned long nowMs, uint8_t msgType, const INT8U* payload
   sendCanResult(msgType, requestId, CAN_RESULT_UNSUPPORTED, 0, 0);
 }
 
-void pollCanFrames(unsigned long nowMs) {
+void pollCanFrames() {
   if (!canNormalModeActive) {
     return;
   }
@@ -250,7 +271,7 @@ void pollCanFrames(unsigned long nowMs) {
       continue;
     }
 
-    handleCanCommand(nowMs, msgType, rxData, rxLen);
+    handleCanCommand(msgType, rxData, rxLen);
   }
 }
 
@@ -385,20 +406,15 @@ void setRelay(bool enabled) {
   digitalWrite(RELAY_PIN, enabled == RELAY_ACTIVE_HIGH ? HIGH : LOW);
 }
 
-void startRelayPulse(unsigned long nowMs) {
-  relayPulseActive = true;
-  relayOffAtMs = nowMs + RELAY_PULSE_MS;
-  setRelay(true);
-}
-
-void stopRelayPulse() {
-  relayPulseActive = false;
-  setRelay(false);
+void setFlapState(bool isUp) {
+  flapIsUp = isUp;
+  // Keep relay energized only while flap is down.
+  setRelay(!flapIsUp);
 }
 
 void printHelp() {
   Serial.println(F("Commands:"));
-  Serial.println(F("  t = manual relay pulse"));
+  Serial.println(F("  t = toggle flap up/down"));
   Serial.println(F("  d = toggle periodic debug stream"));
   Serial.println(F("  c = run MCP2515 self test (no bus required)"));
   Serial.println(F("  s=<0..1023> = set hit threshold"));
@@ -421,7 +437,9 @@ void printSample(unsigned long nowMs) {
   Serial.print(F(" event_counter="));
   Serial.print(eventCounter);
   Serial.print(F(" relay="));
-  Serial.print(relayPulseActive ? 1 : 0);
+  Serial.print(flapIsUp ? 0 : 1);
+  Serial.print(F(" flap_up="));
+  Serial.print(flapIsUp ? 1 : 0);
   Serial.print(F(" can_detected="));
   Serial.print(canControllerDetected ? 1 : 0);
   Serial.print(F(" can_loopback="));
@@ -446,7 +464,7 @@ bool setThresholdValue(int value) {
   return true;
 }
 
-void processSerialCommand(const char* command, unsigned long nowMs) {
+void processSerialCommand(const char* command) {
   if (command[0] == '\0') {
     return;
   }
@@ -459,8 +477,10 @@ void processSerialCommand(const char* command, unsigned long nowMs) {
 
   const char c = command[0];
   if (c == 't' || c == 'T') {
-    Serial.println(F("CMD manual relay pulse"));
-    startRelayPulse(nowMs);
+    setFlapState(!flapIsUp);
+    autoModeEnabled = false;
+    Serial.print(F("CMD flap_up="));
+    Serial.println(flapIsUp ? 1 : 0);
   } else if (c == 'd' || c == 'D') {
     debugStreamingEnabled = !debugStreamingEnabled;
     Serial.print(F("CMD debug_stream="));
@@ -475,7 +495,7 @@ void processSerialCommand(const char* command, unsigned long nowMs) {
   }
 }
 
-void handleSerial(unsigned long nowMs) {
+void handleSerial() {
   static char buffer[32];
   static uint8_t len = 0;
 
@@ -485,14 +505,14 @@ void handleSerial(unsigned long nowMs) {
     if (len == 0 && (c == 't' || c == 'T' || c == 'd' || c == 'D' || c == 'c' || c == 'C' || c == '?')) {
       buffer[0] = c;
       buffer[1] = '\0';
-      processSerialCommand(buffer, nowMs);
+      processSerialCommand(buffer);
       continue;
     }
 
     if (c == '\n' || c == '\r') {
       if (len > 0) {
         buffer[len] = '\0';
-        processSerialCommand(buffer, nowMs);
+        processSerialCommand(buffer);
         len = 0;
       }
       continue;
@@ -507,7 +527,7 @@ void handleSerial(unsigned long nowMs) {
 void setup() {
   pinMode(RELAY_PIN, OUTPUT);
   pinMode(MCP2515_INT_PIN, INPUT_PULLUP);
-  stopRelayPulse();
+  setFlapState(true);
 
   Serial.begin(9600);
   while (!Serial) {
@@ -539,8 +559,8 @@ void setup() {
 void loop() {
   const unsigned long nowMs = millis();
 
-  handleSerial(nowMs);
-  pollCanFrames(nowMs);
+  handleSerial();
+  pollCanFrames();
 
   lastRaw = analogRead(SENSOR_PIN);
 
@@ -568,10 +588,10 @@ void loop() {
   printBurnInProgress(nowMs);
 
   const bool refractoryExpired = (lastHitAtMs == 0) || (nowMs - lastHitAtMs >= REFRACTORY_MS);
-  if (envelope >= hitThreshold && refractoryExpired) {
+  if (autoModeEnabled && envelope >= hitThreshold && refractoryExpired) {
     lastHitAtMs = nowMs;
     eventCounter++;
-    startRelayPulse(nowMs);
+    setFlapState(false);
 
     Serial.print(F("HIT ms="));
     Serial.print(nowMs);
@@ -583,9 +603,4 @@ void loop() {
     Serial.println(eventCounter);
   }
 
-  if (relayPulseActive && static_cast<long>(nowMs - relayOffAtMs) >= 0) {
-    stopRelayPulse();
-    Serial.print(F("RELAY off ms="));
-    Serial.println(nowMs);
-  }
 }

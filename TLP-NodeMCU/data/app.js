@@ -273,7 +273,7 @@ function applyStatus(data) {
       flap.uptimeSeconds = Number(node.uptimeSeconds) || 0;
 
       flap.isUp = computeNodeFlapState(node);
-      flap.mode = (flap.flags & (1 << 2)) !== 0 ? 'manual' : 'auto';
+      flap.mode = (flap.flags & (1 << 1)) !== 0 ? 'auto' : 'manual';
 
       if (nodeId === DEFAULT_NODE_ID) {
         flap.threshold = Number.isFinite(Number(data.threshold)) ? Number(data.threshold) : flap.threshold;
