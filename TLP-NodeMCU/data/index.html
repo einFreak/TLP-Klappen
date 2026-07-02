@@ -9,51 +9,19 @@
 <body>
   <template id="flap-card-template">
     <div class="flap-card" data-flap-id="">
-      <div class="flap-container">
+      <div class="flap-container-wrapper">
         <div class="flap-visual" role="button" tabindex="0" aria-label="Details oeffnen" data-flap-visual="">
           <img class="flap-svg flap-up" src="/flap-up.svg" alt="Klappe hoch">
           <img class="flap-svg flap-down" src="/flap-down.svg" alt="Klappe gefallen">
         </div>
-        <div class="flap-quick-actions" style="display: none;">
+        <div class="flap-quick-actions">
+          <button class="quick-btn quick-btn--move" type="button" data-move-flap="" title="Verschieben">☷</button>
           <button class="quick-btn" type="button" data-action="up" data-flap-id="" title="Auf">↑</button>
           <button class="quick-btn" type="button" data-action="down" data-flap-id="" title="Runter">↓</button>
           <button class="quick-btn" type="button" data-action="toggle" data-flap-id="" title="Umschalten">⇄</button>
           <button class="quick-btn" type="button" data-action="reset" data-flap-id="" title="Zurücksetzen">↻</button>
         </div>
       </div>
-      <div class="flap-metrics">
-        <div class="card-label" data-field="cardLabel">Node</div>
-        <div class="card-status">
-          <span class="badge" data-field="flapOnline" class="badge">-</span>
-        </div>
-      </div>
-      <section class="flap-detail-panel" aria-hidden="true">
-        <header class="detail-header">
-          <h2 data-field="cardLabel">Node</h2>
-          <button class="icon-btn" type="button" aria-label="Close details" data-close-detail="X">X</button>
-        </header>
-        <div class="detail-grid">
-          <div class="detail-item"><span>Node ID</span><strong data-field="detailNodeId">-</strong></div>
-          <div class="detail-item"><span>Online</span><strong data-field="detailOnline">-</strong></div>
-          <div class="detail-item"><span>State</span><strong data-field="detailState">-</strong></div>
-          <div class="detail-item"><span>Mode</span><strong data-field="detailMode">-</strong></div>
-          <div class="detail-item"><span>Heartbeat</span><strong data-field="detailHeartbeat">-</strong></div>
-          <div class="detail-item"><span>Reboots</span><strong data-field="detailReboots">-</strong></div>
-          <div class="detail-item"><span>Status Flags</span><strong data-field="detailFlags">-</strong></div>
-          <div class="detail-item"><span>Uptime (s)</span><strong data-field="detailUptime">-</strong></div>
-          <div class="detail-item"><span>Sensor Raw</span><strong data-field="detailSensorRaw">-</strong></div>
-          <div class="detail-item"><span>Sensor Peak</span><strong data-field="detailSensorPeak">-</strong></div>
-          <div class="detail-item"><span>Sensor Noise</span><strong data-field="detailSensorNoise">-</strong></div>
-        </div>
-        <div class="control-row">
-          <button type="button" data-action="up" data-flap-id="">UP</button>
-          <button type="button" data-action="down" data-flap-id="">DOWN</button>
-          <button type="button" data-action="toggle" data-flap-id="">TOGGLE</button>
-          <button type="button" data-action="auto" data-flap-id="">AUTO</button>
-          <button type="button" data-action="reset" data-flap-id="">RESET</button>
-        </div>
-        <div class="command-status" data-field="commandStatus">Bereit</div>
-      </section>
     </div>
   </template>
 
@@ -63,11 +31,38 @@
         <h1>TLP Klappenstand</h1>
         <p>Multi-Node Stage</p>
       </header>
-
       <div id="flapStage" class="flap-stage"></div>
     </section>
 
-    <aside class="network-panel">
+    <section class="detail-panel-container" id="detailPanel" aria-hidden="true">
+      <header class="detail-header">
+        <h2 data-field="cardLabel">Node</h2>
+        <button class="icon-btn" type="button" aria-label="Close details" id="closeDetailBtn">X</button>
+      </header>
+      <div class="detail-grid">
+        <div class="detail-item"><span>Node ID</span><strong data-field="detailNodeId">-</strong></div>
+        <div class="detail-item"><span>Online</span><strong data-field="detailOnline">-</strong></div>
+        <div class="detail-item"><span>State</span><strong data-field="detailState">-</strong></div>
+        <div class="detail-item"><span>Mode</span><strong data-field="detailMode">-</strong></div>
+        <div class="detail-item"><span>Heartbeat</span><strong data-field="detailHeartbeat">-</strong></div>
+        <div class="detail-item"><span>Reboots</span><strong data-field="detailReboots">-</strong></div>
+        <div class="detail-item"><span>Status Flags</span><strong data-field="detailFlags">-</strong></div>
+        <div class="detail-item"><span>Uptime (s)</span><strong data-field="detailUptime">-</strong></div>
+        <div class="detail-item"><span>Sensor Raw</span><strong data-field="detailSensorRaw">-</strong></div>
+        <div class="detail-item"><span>Sensor Peak</span><strong data-field="detailSensorPeak">-</strong></div>
+        <div class="detail-item"><span>Sensor Noise</span><strong data-field="detailSensorNoise">-</strong></div>
+      </div>
+      <div class="control-row">
+        <button type="button" data-action="up" data-flap-id="">UP</button>
+        <button type="button" data-action="down" data-flap-id="">DOWN</button>
+        <button type="button" data-action="toggle" data-flap-id="">TOGGLE</button>
+        <button type="button" data-action="auto" data-flap-id="">AUTO</button>
+        <button type="button" data-action="reset" data-flap-id="">RESET</button>
+      </div>
+      <div class="command-status" data-field="commandStatus">Bereit</div>
+    </section>
+
+    <footer class="network-panel">
       <h2>Netzwerk</h2>
       <div class="status-grid">
         <div class="status-item">
@@ -91,14 +86,14 @@
           <div class="status-value" id="apMac">-</div>
         </div>
       </div>
-
       <div class="connection-indicator">
         <div class="dot"></div>
         <div class="connection-text" id="connectionStatus">Connecting...</div>
       </div>
-    </aside>
+    </footer>
   </div>
 
   <script src="/app.js"></script>
+  <script src="/api.js"></script>
 </body>
 </html>

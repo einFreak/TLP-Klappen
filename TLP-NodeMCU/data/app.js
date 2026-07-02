@@ -56,8 +56,9 @@ function loadLayout() {
     const stored = JSON.parse(localStorage.getItem(LS_KEY) || '{}');
     state.flaps.forEach((f) => {
       const saved = stored[f.id];
-      if (saved && typeof saved.detailOpen === 'boolean') {
-        f.detailOpen = saved.detailOpen;
+      if (saved) {
+        f.visualLeft = saved.visualLeft || 0;
+        f.visualTop = saved.visualTop || 0;
       }
     });
   } catch (_) {}
@@ -66,7 +67,10 @@ function loadLayout() {
 function saveLayout() {
   const layout = {};
   state.flaps.forEach((f) => {
-    layout[f.id] = { detailOpen: !!f.detailOpen };
+    layout[f.id] = { 
+      visualLeft: f.visualLeft || 0, 
+      visualTop: f.visualTop || 0 
+    };
   });
   try {
     localStorage.setItem(LS_KEY, JSON.stringify(layout));
@@ -101,6 +105,9 @@ function ensureFlapModel(nodeId) {
       commandState: 'idle',
       commandText: 'Bereit',
       detailOpen: false,
+      visualLeft: 0,
+      visualTop: 0,
+      isMoving: false,
     };
     state.flaps.push(flap);
   }
@@ -115,36 +122,22 @@ function createCardElement(flap) {
 
   card.dataset.flapId = flap.id;
   card.dataset.nodeId = String(flap.nodeId);
-  card.querySelector('[data-flap-visual]').dataset.flapVisual = flap.id;
-  card.querySelector('[data-close-detail]').dataset.closeDetail = flap.id;
-  card.querySelectorAll('[data-apply-threshold]').forEach((el) => {
-    el.dataset.applyThreshold = flap.id;
-  });
+
+  const visual = card.querySelector('[data-flap-visual]');
+  if (visual) {
+    visual.dataset.flapVisual = flap.id;
+  }
+
   card.querySelectorAll('[data-action]').forEach((el) => {
     el.dataset.flapId = flap.id;
   });
-  qf(card, 'cardLabel').textContent = flap.label;
 
-  const rangeEl = qf(card, 'thresholdRange');
-  const numEl = qf(card, 'thresholdNumber');
-  if (rangeEl && numEl) {
-    rangeEl.addEventListener('input', () => {
-      numEl.value = rangeEl.value;
-    });
-    numEl.addEventListener('input', () => {
-      const v = Math.max(0, Math.min(1023, Number(numEl.value) || 0));
-      rangeEl.value = String(v);
-    });
+  const moveBtn = card.querySelector('[data-move-flap]');
+  if (moveBtn) {
+    moveBtn.dataset.moveFlapId = flap.id;
   }
 
   return card;
-}
-
-function setCardBusy(card, busy) {
-  if (!card) return;
-  card.querySelectorAll('[data-action], [data-apply-threshold]').forEach((el) => {
-    el.disabled = busy;
-  });
 }
 
 function setFlapCommandState(flapId, commandState, commandText) {
@@ -152,21 +145,63 @@ function setFlapCommandState(flapId, commandState, commandText) {
   if (!flap) return;
   flap.commandState = commandState;
   flap.commandText = commandText;
-  renderCard(flap);
+  renderDetailPanel();
 }
 
-function applyCardInteractivity(card, flap) {
-  if (!card || !flap) return;
-  const forceDisable = !flap.online || flap.commandState === 'pending';
-  card.querySelectorAll('[data-action], [data-apply-threshold]').forEach((el) => {
-    el.disabled = forceDisable;
+function renderDetailPanel() {
+  const detailPanel = document.getElementById('detailPanel');
+  if (!detailPanel) return;
+
+  const openFlap = state.flaps.find((f) => f.detailOpen);
+  if (!openFlap) {
+    if (detailPanel.contains(document.activeElement)) {
+      document.activeElement.blur();
+    }
+    detailPanel.inert = true;
+    detailPanel.setAttribute('aria-hidden', 'true');
+    return;
+  }
+
+  detailPanel.inert = false;
+  detailPanel.setAttribute('aria-hidden', 'false');
+  
+  // Update all fields
+  const fields = {
+    cardLabel: openFlap.label,
+    detailNodeId: String(openFlap.nodeId),
+    detailOnline: openFlap.online ? 'ja' : 'nein',
+    detailHeartbeat: String(openFlap.heartbeat),
+    detailReboots: String(openFlap.reboots),
+    detailFlags: String(openFlap.flags),
+    detailUptime: String(openFlap.uptimeSeconds),
+    detailState: openFlap.isUp ? 'HOCH' : 'GEFALLEN',
+    detailMode: openFlap.mode.toUpperCase(),
+    detailSensorRaw: String(openFlap.sensorRaw),
+    detailSensorPeak: String(openFlap.sensorPeak),
+    detailSensorNoise: String(openFlap.sensorNoise),
+  };
+
+  Object.entries(fields).forEach(([field, value]) => {
+    const el = qf(detailPanel, field);
+    if (el) el.textContent = value;
   });
-}
 
-function formatTriggerAt(value) {
-  const ms = finiteOr(value, 0);
-  if (ms <= 0) return '-';
-  return String(ms) + ' ms';
+  // Update command status
+  const cmdStatus = qf(detailPanel, 'commandStatus');
+  if (cmdStatus) {
+    cmdStatus.textContent = openFlap.commandText || 'Bereit';
+    cmdStatus.className = 'command-status';
+    if (openFlap.commandState === 'pending') cmdStatus.classList.add('command-status--pending');
+    else if (openFlap.commandState === 'ok') cmdStatus.classList.add('command-status--ok');
+    else if (openFlap.commandState === 'error') cmdStatus.classList.add('command-status--error');
+  }
+
+  // Update action buttons
+  const disabled = !openFlap.online || openFlap.commandState === 'pending';
+  detailPanel.querySelectorAll('[data-action]').forEach((el) => {
+    el.dataset.flapId = openFlap.id;
+    el.disabled = disabled;
+  });
 }
 
 function renderCard(flap) {
@@ -179,57 +214,29 @@ function renderCard(flap) {
     stage.appendChild(card);
   }
 
-  card.dataset.nodeId = String(flap.nodeId);
-  qf(card, 'cardLabel').textContent = flap.label;
+  // Apply positioning
+  if (flap.visualLeft || flap.visualTop) {
+    card.style.position = 'absolute';
+    card.style.left = flap.visualLeft + 'px';
+    card.style.top = flap.visualTop + 'px';
+  } else {
+    card.style.position = 'relative';
+    card.style.left = 'auto';
+    card.style.top = 'auto';
+  }
 
+  // Update visual state
   const visual = card.querySelector('[data-flap-visual]');
   if (visual) {
     visual.classList.toggle('up', flap.isUp);
     visual.classList.toggle('down', !flap.isUp);
   }
 
-  // Update compact card: label and online badge only
-  badge(qf(card, 'flapOnline'), flap.online ? 'ONLINE' : 'OFFLINE', flap.online ? 'ok' : 'danger');
-
-  const panel = card.querySelector('.flap-detail-panel');
-  if (panel) {
-    panel.classList.toggle('open', !!flap.detailOpen);
-    panel.setAttribute('aria-hidden', flap.detailOpen ? 'false' : 'true');
+  // Update move button state
+  const moveBtn = card.querySelector('[data-move-flap]');
+  if (moveBtn) {
+    moveBtn.classList.toggle('moving', flap.isMoving);
   }
-
-  const quickActions = card.querySelector('.flap-quick-actions');
-  if (quickActions) {
-    quickActions.style.display = flap.detailOpen ? 'flex' : 'none';
-  }
-
-  if (qf(card, 'detailNodeId')) qf(card, 'detailNodeId').textContent = String(flap.nodeId);
-  if (qf(card, 'detailOnline')) qf(card, 'detailOnline').textContent = flap.online ? 'ja' : 'nein';
-  if (qf(card, 'detailHeartbeat')) qf(card, 'detailHeartbeat').textContent = String(flap.heartbeat);
-  if (qf(card, 'detailReboots')) qf(card, 'detailReboots').textContent = String(flap.reboots);
-  if (qf(card, 'detailFlags')) qf(card, 'detailFlags').textContent = String(flap.flags);
-  if (qf(card, 'detailUptime')) qf(card, 'detailUptime').textContent = String(flap.uptimeSeconds);
-
-  if (qf(card, 'detailState')) qf(card, 'detailState').textContent = flap.isUp ? 'HOCH' : 'GEFALLEN';
-  if (qf(card, 'detailMode')) qf(card, 'detailMode').textContent = flap.mode.toUpperCase();
-  if (qf(card, 'detailSensorRaw')) qf(card, 'detailSensorRaw').textContent = String(flap.sensorRaw);
-  if (qf(card, 'detailSensorPeak')) qf(card, 'detailSensorPeak').textContent = String(flap.sensorPeak);
-  if (qf(card, 'detailSensorNoise')) qf(card, 'detailSensorNoise').textContent = String(flap.sensorNoise);
-
-  const cmdStatus = qf(card, 'commandStatus');
-  if (cmdStatus) {
-    cmdStatus.textContent = flap.commandText || 'Bereit';
-    cmdStatus.className = 'command-status';
-    if (flap.commandState === 'pending') cmdStatus.classList.add('command-status--pending');
-    else if (flap.commandState === 'ok') cmdStatus.classList.add('command-status--ok');
-    else if (flap.commandState === 'error') cmdStatus.classList.add('command-status--error');
-  }
-
-  applyCardInteractivity(card, flap);
-
-  const rangeEl = qf(card, 'thresholdRange');
-  const numEl = qf(card, 'thresholdNumber');
-  if (rangeEl && document.activeElement !== rangeEl) rangeEl.value = String(flap.threshold);
-  if (numEl && document.activeElement !== numEl) numEl.value = String(flap.threshold);
 }
 
 function renderStage() {
@@ -302,7 +309,6 @@ function applyStatus(data) {
       flap.isUp = computeNodeFlapState(node);
       flap.mode = (flap.flags & (1 << 1)) !== 0 ? 'auto' : 'manual';
 
-      // Trigger fields are now only taken from node-scoped payload fields.
       flap.threshold = finiteOr(node.threshold, flap.threshold);
       flap.raw = finiteOr(node.raw, flap.raw);
       flap.envelope = finiteOr(node.envelope, flap.envelope);
@@ -327,223 +333,125 @@ function applyStatus(data) {
   };
 
   render();
-}
-
-async function waitForCommandResult(requestId, timeoutMs = 1500) {
-  const start = Date.now();
-
-  while ((Date.now() - start) < timeoutMs) {
-    const res = await fetch('/api/command-result?id=' + encodeURIComponent(requestId));
-    if (!res.ok) {
-      throw new Error('command result lookup failed');
-    }
-
-    const result = await res.json();
-    if (Number(result.done) === 1) {
-      return result;
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, 80));
-  }
-
-  throw new Error('command timeout');
-}
-
-async function postFlapAction(flapId, action) {
-  const stage = document.getElementById('flapStage');
-  const card = stage && stage.querySelector('[data-flap-id="' + flapId + '"]');
-  const nodeId = toNodeId(card ? card.dataset.nodeId : -1);
-
-  setFlapCommandState(flapId, 'pending', 'Sende Befehl...');
-  setCardBusy(card, true);
-  try {
-    if (!card || card.dataset.nodeId === undefined || nodeId < 0) {
-      throw new Error('node not found');
-    }
-
-    if (!state.flaps.find((f) => f.id === flapId)?.online) {
-      throw new Error('node offline');
-    }
-
-    const res = await fetch('/api/flap?action=' + encodeURIComponent(action) + '&node=' + encodeURIComponent(nodeId), { method: 'POST' });
-    if (!res.ok) throw new Error('flap action send failed');
-
-    const accepted = await res.json();
-    if (!accepted || Number(accepted.pending) !== 1 || !accepted.requestId) {
-      throw new Error('invalid command accept response');
-    }
-
-    const result = await waitForCommandResult(accepted.requestId, 2000);
-    if (result.state !== 'ack') {
-      throw new Error('flap action rejected: ' + result.state);
-    }
-
-    setFlapCommandState(flapId, 'ok', 'Aktion bestaetigt');
-    updateStatus();
-    text('connectionStatus', 'Aktion fuer Node ' + nodeId + ' ausgefuehrt');
-  } catch (err) {
-    console.error(err);
-    setFlapCommandState(flapId, 'error', 'Aktion fehlgeschlagen');
-    text('connectionStatus', 'Aktion fehlgeschlagen');
-  } finally {
-    setCardBusy(card, false);
-  }
-}
-
-async function postThreshold(flapId, value) {
-  const stage = document.getElementById('flapStage');
-  const card = stage && stage.querySelector('[data-flap-id="' + flapId + '"]');
-  const nodeId = toNodeId(card ? card.dataset.nodeId : -1);
-
-  setFlapCommandState(flapId, 'pending', 'Setze Schwellwert...');
-  setCardBusy(card, true);
-  try {
-    if (!card || card.dataset.nodeId === undefined || nodeId < 0) {
-      throw new Error('node not found');
-    }
-
-    if (!state.flaps.find((f) => f.id === flapId)?.online) {
-      throw new Error('node offline');
-    }
-
-    const v = Math.max(0, Math.min(1023, Number(value) || 0));
-    const res = await fetch('/api/threshold?value=' + encodeURIComponent(v) + '&node=' + encodeURIComponent(nodeId), { method: 'POST' });
-    if (!res.ok) throw new Error('threshold update send failed');
-
-    const accepted = await res.json();
-    if (!accepted || Number(accepted.pending) !== 1 || !accepted.requestId) {
-      throw new Error('invalid command accept response');
-    }
-
-    const result = await waitForCommandResult(accepted.requestId, 2000);
-    if (result.state !== 'ack') {
-      throw new Error('threshold rejected: ' + result.state);
-    }
-
-    setFlapCommandState(flapId, 'ok', 'Schwellwert bestaetigt');
-    updateStatus();
-    text('connectionStatus', 'Schwellwert fuer Node ' + nodeId + ' gesetzt');
-  } catch (err) {
-    console.error(err);
-    setFlapCommandState(flapId, 'error', 'Schwellwert fehlgeschlagen');
-    text('connectionStatus', 'Schwellwert fehlgeschlagen');
-  } finally {
-    setCardBusy(card, false);
-  }
+  renderDetailPanel();
 }
 
 document.addEventListener('DOMContentLoaded', () => {
   const stage = document.getElementById('flapStage');
-  if (!stage) return;
+  const detailPanel = document.getElementById('detailPanel');
+  const closeBtn = document.getElementById('closeDetailBtn');
 
-  stage.addEventListener('click', (e) => {
-    const actionBtn = e.target.closest('[data-action]');
-    if (actionBtn && actionBtn.dataset.flapId) {
-      postFlapAction(actionBtn.dataset.flapId, actionBtn.dataset.action);
-      return;
-    }
+  // Simplified handler for all card interactions
+  if (stage) {
+    stage.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const target = e.target;
 
-    const applyBtn = e.target.closest('[data-apply-threshold]');
-    if (applyBtn && applyBtn.dataset.applyThreshold) {
-      const card = stage.querySelector('[data-flap-id="' + applyBtn.dataset.applyThreshold + '"]');
-      const numEl = card && card.querySelector('[data-field="thresholdNumber"]');
-      postThreshold(applyBtn.dataset.applyThreshold, numEl ? numEl.value : 0);
-      return;
-    }
-
-    const closeBtn = e.target.closest('[data-close-detail]');
-    if (closeBtn && closeBtn.dataset.closeDetail) {
-      const flap = state.flaps.find((f) => f.id === closeBtn.dataset.closeDetail);
-      if (flap) {
-        flap.detailOpen = false;
-        saveLayout();
-        renderCard(flap);
+      // Check if clicking on SVG - open detail
+      if (target.closest('.flap-svg')) {
+        const visual = target.closest('[data-flap-visual]');
+        if (visual?.dataset.flapVisual) {
+          const flap = state.flaps.find((f) => f.id === visual.dataset.flapVisual);
+          if (flap) {
+            const card = target.closest('.flap-card');
+            if (card) {
+              stage.querySelectorAll('.flap-card').forEach((c) => c.classList.remove('show-actions'));
+              card.classList.add('show-actions');
+            }
+            state.flaps.forEach((f) => { f.detailOpen = f.id === flap.id; });
+            renderDetailPanel();
+          }
+        }
+        return;
       }
-      return;
-    }
 
-    const visual = e.target.closest('[data-flap-visual]');
-    if (visual && visual.dataset.flapVisual) {
-      const flap = state.flaps.find((f) => f.id === visual.dataset.flapVisual);
-      if (flap) {
-        flap.detailOpen = !flap.detailOpen;
-        saveLayout();
-        renderCard(flap);
+      // Check if clicking action button
+      const actionBtn = target.closest('[data-action]');
+      if (actionBtn?.dataset.flapId) {
+        postFlapAction(actionBtn.dataset.flapId, actionBtn.dataset.action);
+        return;
       }
+
+      // Check if clicking move button
+      const moveBtn = target.closest('[data-move-flap]');
+      if (moveBtn?.dataset.moveFlapId) {
+        const flap = state.flaps.find((f) => f.id === moveBtn.dataset.moveFlapId);
+        if (flap) {
+          flap.isMoving = !flap.isMoving;
+          renderCard(flap);
+          if (flap.isMoving) {
+            const card = stage.querySelector('[data-flap-id="' + flap.id + '"]');
+            setupCardDrag(moveBtn, card, flap);
+          }
+        }
+        return;
+      }
+
+      // Default: show/hide buttons on card click
+      const card = target.closest('.flap-card');
+      if (card) {
+        stage.querySelectorAll('.flap-card').forEach((c) => c.classList.remove('show-actions'));
+        card.classList.add('show-actions');
+      }
+    });
+  }
+
+  // Close detail panel
+  closeBtn?.addEventListener('click', () => {
+    if (detailPanel?.contains(document.activeElement)) {
+      document.activeElement.blur();
     }
+    state.flaps.forEach((f) => { f.detailOpen = false; });
+    renderDetailPanel();
   });
 
-  stage.addEventListener('keydown', (e) => {
-    if (e.key !== 'Enter' && e.key !== ' ') return;
-    const visual = e.target.closest('[data-flap-visual]');
-    if (visual && visual.dataset.flapVisual) {
-      e.preventDefault();
-      const flap = state.flaps.find((f) => f.id === visual.dataset.flapVisual);
-      if (flap) {
-        flap.detailOpen = !flap.detailOpen;
-        saveLayout();
-        renderCard(flap);
-      }
+  // Detail panel action buttons
+  detailPanel?.addEventListener('click', (e) => {
+    const actionBtn = e.target.closest('[data-action]');
+    if (actionBtn?.dataset.flapId) {
+      postFlapAction(actionBtn.dataset.flapId, actionBtn.dataset.action);
     }
   });
 });
 
-function updateStatus() {
-  fetch('/api/status')
-    .then((r) => {
-      if (!r.ok) throw new Error(r.status);
-      return r.json();
-    })
-    .then((data) => {
-      state.connected = true;
-      applyStatus(data);
-      text('connectionStatus', 'Status OK');
-    })
-    .catch(() => {
-      state.connected = false;
-      text('connectionStatus', 'Verbindung verloren');
-    });
-}
+function setupCardDrag(moveBtn, card, flap) {
+  let isDragging = false;
+  let startX, startY, startLeft, startTop;
 
-let sseBackoffMs = 1000;
-let sseSource = null;
+  const onMouseDown = (e) => {
+    if (!flap.isMoving) return;
+    e.preventDefault();
+    isDragging = true;
+    startX = e.clientX;
+    startY = e.clientY;
+    startLeft = flap.visualLeft || 0;
+    startTop = flap.visualTop || 0;
 
-function connectSSE() {
-  if (sseSource) {
-    sseSource.close();
-    sseSource = null;
-  }
+    const onMouseMove = (e) => {
+      if (!isDragging) return;
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      const newLeft = Math.max(0, startLeft + dx);
+      const newTop = Math.max(0, startTop + dy);
+      card.style.position = 'absolute';
+      card.style.left = newLeft + 'px';
+      card.style.top = newTop + 'px';
+    };
 
-  const es = new EventSource('/events');
-  sseSource = es;
+    const onMouseUp = () => {
+      isDragging = false;
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      flap.visualLeft = parseInt(card.style.left) || 0;
+      flap.visualTop = parseInt(card.style.top) || 0;
+      saveLayout();
+    };
 
-  es.addEventListener('status', (e) => {
-    try {
-      sseBackoffMs = 1000;
-      state.connected = true;
-      applyStatus(JSON.parse(e.data));
-      text('connectionStatus', 'Live');
-    } catch (_) {}
-  });
-
-  es.onerror = () => {
-    state.connected = false;
-    text('connectionStatus', 'SSE offline - Retry in ' + (sseBackoffMs / 1000).toFixed(0) + 's');
-    es.close();
-    sseSource = null;
-
-    const delay = sseBackoffMs;
-    sseBackoffMs = Math.min(sseBackoffMs * 2, 30000);
-    setTimeout(connectSSE, delay);
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
   };
+
+  moveBtn.addEventListener('mousedown', onMouseDown);
 }
 
 loadLayout();
-updateStatus();
-connectSSE();
-
-setInterval(() => {
-  if (!state.connected) {
-    updateStatus();
-  }
-}, 5000);
