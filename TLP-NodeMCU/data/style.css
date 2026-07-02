@@ -70,6 +70,12 @@ body {
   gap: 14px;
 }
 
+.flap-container {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
 .flap-visual {
   background: linear-gradient(180deg, #1f252d 0%, #171d24 100%);
   border: 1px solid rgba(255, 255, 255, 0.07);
@@ -79,6 +85,7 @@ body {
   place-items: center;
   overflow: hidden;
   cursor: pointer;
+  flex: 1;
 }
 
 .flap-visual:focus-visible {
@@ -106,6 +113,39 @@ body {
 .flap-visual.down .flap-down {
   transform: translateY(0);
   filter: drop-shadow(0 8px 16px rgba(0, 0, 0, 0.35));
+}
+
+.flap-quick-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-self: center;
+}
+
+.quick-btn {
+  width: 44px;
+  height: 44px;
+  border: 1px solid rgba(249, 115, 22, 0.4);
+  background: rgba(249, 115, 22, 0.1);
+  color: var(--accent);
+  border-radius: 10px;
+  cursor: pointer;
+  font-size: 16px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 150ms ease;
+}
+
+.quick-btn:hover {
+  background: rgba(249, 115, 22, 0.2);
+  border-color: var(--accent);
+  transform: scale(1.05);
+}
+
+.quick-btn:active {
+  transform: scale(0.95);
 }
 
 .flap-metrics {

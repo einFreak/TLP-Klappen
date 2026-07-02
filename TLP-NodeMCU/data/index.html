@@ -9,9 +9,17 @@
 <body>
   <template id="flap-card-template">
     <div class="flap-card" data-flap-id="">
-      <div class="flap-visual" role="button" tabindex="0" aria-label="Details oeffnen" data-flap-visual="">
-        <img class="flap-svg flap-up" src="/flap-up.svg" alt="Klappe hoch">
-        <img class="flap-svg flap-down" src="/flap-down.svg" alt="Klappe gefallen">
+      <div class="flap-container">
+        <div class="flap-visual" role="button" tabindex="0" aria-label="Details oeffnen" data-flap-visual="">
+          <img class="flap-svg flap-up" src="/flap-up.svg" alt="Klappe hoch">
+          <img class="flap-svg flap-down" src="/flap-down.svg" alt="Klappe gefallen">
+        </div>
+        <div class="flap-quick-actions" style="display: none;">
+          <button class="quick-btn" type="button" data-action="up" data-flap-id="" title="Auf">↑</button>
+          <button class="quick-btn" type="button" data-action="down" data-flap-id="" title="Runter">↓</button>
+          <button class="quick-btn" type="button" data-action="toggle" data-flap-id="" title="Umschalten">⇄</button>
+          <button class="quick-btn" type="button" data-action="reset" data-flap-id="" title="Zurücksetzen">↻</button>
+        </div>
       </div>
       <div class="flap-metrics">
         <div class="card-label" data-field="cardLabel">Node</div>

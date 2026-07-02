@@ -197,6 +197,11 @@ function renderCard(flap) {
     panel.setAttribute('aria-hidden', flap.detailOpen ? 'false' : 'true');
   }
 
+  const quickActions = card.querySelector('.flap-quick-actions');
+  if (quickActions) {
+    quickActions.style.display = flap.detailOpen ? 'flex' : 'none';
+  }
+
   if (qf(card, 'detailNodeId')) qf(card, 'detailNodeId').textContent = String(flap.nodeId);
   if (qf(card, 'detailOnline')) qf(card, 'detailOnline').textContent = flap.online ? 'ja' : 'nein';
   if (qf(card, 'detailHeartbeat')) qf(card, 'detailHeartbeat').textContent = String(flap.heartbeat);
