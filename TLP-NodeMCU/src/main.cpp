@@ -364,9 +364,9 @@ void updateNodeHeartbeat(uint8_t parsedPriority, uint8_t nodeId, const INT8U *rx
   if (nodeId == ATMEGA_NODE_ID)
   {
     const bool remoteRelayPulseActive = (state.statusFlags & (1u << 2)) != 0;
+    const bool remoteAutoMode = (state.statusFlags & (1u << 1)) != 0;
     flapIsUp = !remoteRelayPulseActive;
-    // Gateway should not auto-expire into local manual mode for remote commands.
-    manualOverrideEnabled = false;
+    manualOverrideEnabled = !remoteAutoMode;
     manualOverrideUntilMs = 0;
   }
 }
@@ -678,23 +678,24 @@ enum class ControlAction
   ResetLatch
 };
 
-bool setThresholdValue(int value, bool printFeedback)
+bool sendCanFlapCommandImmediate(uint8_t targetNodeId, uint8_t flapCommand)
 {
-  if (value < 0 || value > 1023)
+  INT8U payload[1] = {flapCommand};
+  return sendCanCommand(targetNodeId, TLP_CAN_MSG_FLAP_COMMAND, 0, payload, 1);
+}
+
+bool sendCanThresholdImmediate(uint8_t targetNodeId, int threshold)
+{
+  if (threshold < 0 || threshold > 1023)
   {
-    if (printFeedback)
-    {
-      Serial.println(F("CMD threshold invalid (expected 0..1023)"));
-    }
     return false;
   }
-  hitThreshold = value;
-  if (printFeedback)
-  {
-    Serial.print(F("CMD threshold="));
-    Serial.println(hitThreshold);
-  }
-  return true;
+
+  INT8U payload[2] = {
+    static_cast<INT8U>(threshold & 0xFF),
+    static_cast<INT8U>((threshold >> 8) & 0xFF)
+  };
+  return sendCanCommand(targetNodeId, TLP_CAN_MSG_SET_THRESHOLD, 0, payload, 2);
 }
 
 void setFlap(bool moveUp)
@@ -702,65 +703,6 @@ void setFlap(bool moveUp)
   flapIsUp = moveUp;
   (void)RELAY_ACTIVE_HIGH;
   digitalWrite(ONBOARD_LED_PIN, moveUp == ONBOARD_LED_ACTIVE_LOW ? LOW : HIGH);
-}
-
-void applyControlAction(ControlAction action, bool printFeedback)
-{
-  const unsigned long nowMs = millis();
-
-  if (action == ControlAction::FlapUp)
-  {
-    setFlap(true);
-    manualOverrideEnabled = true;
-    manualOverrideUntilMs = nowMs + MANUAL_OVERRIDE_MS;
-    if (printFeedback)
-    {
-      Serial.print(F("CMD flap=up, mode=manual for ms="));
-      Serial.println(MANUAL_OVERRIDE_MS);
-    }
-  }
-  else if (action == ControlAction::FlapDown)
-  {
-    setFlap(false);
-    manualOverrideEnabled = true;
-    manualOverrideUntilMs = nowMs + MANUAL_OVERRIDE_MS;
-    if (printFeedback)
-    {
-      Serial.print(F("CMD flap=down, mode=manual for ms="));
-      Serial.println(MANUAL_OVERRIDE_MS);
-    }
-  }
-  else if (action == ControlAction::FlapToggle)
-  {
-    setFlap(!flapIsUp);
-    manualOverrideEnabled = true;
-    manualOverrideUntilMs = nowMs + MANUAL_OVERRIDE_MS;
-    if (printFeedback)
-    {
-      Serial.print(F("CMD flap="));
-      Serial.print(flapIsUp ? F("up") : F("down"));
-      Serial.print(F(", mode=manual for ms="));
-      Serial.println(MANUAL_OVERRIDE_MS);
-    }
-  }
-  else if (action == ControlAction::AutoMode)
-  {
-    manualOverrideEnabled = false;
-    manualOverrideUntilMs = 0;
-    if (printFeedback)
-    {
-      Serial.println(F("CMD mode=auto"));
-    }
-  }
-  else if (action == ControlAction::ResetLatch)
-  {
-    hitLatched = false;
-    setFlap(true);
-    if (printFeedback)
-    {
-      Serial.println(F("CMD reset (latched=0, flap=up)"));
-    }
-  }
 }
 
 void printTeleplot(unsigned long nowMs)
@@ -813,16 +755,56 @@ void processSerialCommand(const char *command)
   if ((command[0] == 's' || command[0] == 'S') && command[1] == '=')
   {
     const long parsed = strtol(command + 2, nullptr, 10);
-    setThresholdValue(static_cast<int>(parsed), true);
+    const int threshold = static_cast<int>(parsed);
+    if (threshold < 0 || threshold > 1023)
+    {
+      Serial.println(F("CMD threshold invalid (expected 0..1023)"));
+      return;
+    }
+
+    if (sendCanThresholdImmediate(ATMEGA_NODE_ID, threshold))
+    {
+      Serial.print(F("CMD can threshold queued value="));
+      Serial.println(threshold);
+    }
+    else
+    {
+      Serial.println(F("CMD can threshold failed"));
+    }
     return;
   }
 
   const char single = command[0];
-  if      (single == 'u' || single == 'U') applyControlAction(ControlAction::FlapUp,     true);
-  else if (single == 'l' || single == 'L') applyControlAction(ControlAction::FlapDown,   true);
-  else if (single == 't' || single == 'T') applyControlAction(ControlAction::FlapToggle, true);
-  else if (single == 'a' || single == 'A') applyControlAction(ControlAction::AutoMode,   true);
-  else if (single == 'r' || single == 'R') applyControlAction(ControlAction::ResetLatch, true);
+  if (single == 'u' || single == 'U')
+  {
+    Serial.println(sendCanFlapCommandImmediate(ATMEGA_NODE_ID, CAN_FLAP_UP)
+      ? F("CMD can flap=up queued")
+      : F("CMD can flap=up failed"));
+  }
+  else if (single == 'l' || single == 'L')
+  {
+    Serial.println(sendCanFlapCommandImmediate(ATMEGA_NODE_ID, CAN_FLAP_DOWN)
+      ? F("CMD can flap=down queued")
+      : F("CMD can flap=down failed"));
+  }
+  else if (single == 't' || single == 'T')
+  {
+    Serial.println(sendCanFlapCommandImmediate(ATMEGA_NODE_ID, CAN_FLAP_TOGGLE)
+      ? F("CMD can flap=toggle queued")
+      : F("CMD can flap=toggle failed"));
+  }
+  else if (single == 'a' || single == 'A')
+  {
+    Serial.println(sendCanFlapCommandImmediate(ATMEGA_NODE_ID, CAN_FLAP_AUTO)
+      ? F("CMD can flap=auto queued")
+      : F("CMD can flap=auto failed"));
+  }
+  else if (single == 'r' || single == 'R')
+  {
+    Serial.println(sendCanFlapCommandImmediate(ATMEGA_NODE_ID, CAN_FLAP_RESET)
+      ? F("CMD can flap=reset queued")
+      : F("CMD can flap=reset failed"));
+  }
   else if (single == 'd' || single == 'D')
   {
     debugStreamingEnabled = !debugStreamingEnabled;
@@ -1270,20 +1252,6 @@ void startWebServer()
       return;
     }
 
-    // Keep immediate UX feedback lightweight; authoritative state arrives via heartbeat/result frames.
-    if (action == "up")
-    {
-      setFlap(true);
-    }
-    else if (action == "down")
-    {
-      setFlap(false);
-    }
-    else if (action == "toggle")
-    {
-      setFlap(!flapIsUp);
-    }
-
     sendCommandAcceptedResponse(request, *pending);
   });
 
@@ -1324,8 +1292,6 @@ void startWebServer()
       return;
     }
 
-    // Optimistically mirror remote value in UI state; definitive result arrives via CAN result frame.
-    setThresholdValue(threshold, false);
     sendCommandAcceptedResponse(request, *pending);
   });
 
@@ -1390,7 +1356,7 @@ void streamApStatus()
       return;
     }
 
-    const String status = buildStatusJson(false);
+    const String status = buildStatusJson(true);
     const AsyncEventSource::SendStatus sendStatus = webEvents.send(status.c_str(), "status", nowMs);
     if (sendStatus != AsyncEventSource::SendStatus::ENQUEUED)
     {
@@ -1479,34 +1445,6 @@ void loop()
 
   handleSerial();
 
-  // Manual override timeout -> revert to auto.
-  if (manualOverrideEnabled && nowMs >= manualOverrideUntilMs)
-  {
-    manualOverrideEnabled = false;
-    manualOverrideUntilMs = 0;
-    Serial.println(F("MODE auto (manual override timeout)"));
-  }
-
-  if (nowMs - lastSensorSampleAtMs >= SENSOR_SAMPLE_INTERVAL_MS)
-  {
-    lastSensorSampleAtMs = nowMs;
-
-    // Sensor pipeline: raw ADC -> moving baseline -> centered -> envelope.
-    lastRaw = analogRead(SENSOR_PIN);
-    baselineQ8 += ((static_cast<long>(lastRaw) << 8) - baselineQ8) >> BASELINE_FILTER_SHIFT;
-    lastBaseline = static_cast<int>(baselineQ8 >> 8);
-    lastCentered = lastRaw - lastBaseline;
-
-    const int magnitude = abs(lastCentered);
-    if (magnitude > envelope)
-    {
-      envelope = magnitude;
-    }
-    else if (envelope > 0)
-    {
-      envelope -= max(1, envelope >> ENVELOPE_DECAY_SHIFT);
-    }
-  }
 
   if (nowMs - lastStatusAtMs >= STATUS_INTERVAL_MS)
   {
@@ -1528,26 +1466,6 @@ void loop()
 
   pollCanFrames();
   printCanStatus(nowMs);
-
-  // Automatic hit trigger: envelope over threshold -> flap up + latch.
-  if (!manualOverrideEnabled && !hitLatched && envelope >= hitThreshold)
-  {
-    hitLatched = true;
-    lastTriggerRaw = lastRaw;
-    lastTriggerEnvelope = envelope;
-    lastTriggerAtMs = nowMs;
-    setFlap(false);
-    Serial.print(F("HIT ms="));
-    Serial.print(nowMs);
-    Serial.print(F(" raw="));
-    Serial.print(lastRaw);
-    Serial.print(F(" centered="));
-    Serial.print(lastCentered);
-    Serial.print(F(" envelope="));
-    Serial.print(envelope);
-    Serial.print(F(" threshold="));
-    Serial.println(hitThreshold);
-  }
 
   streamApStatus();
 
