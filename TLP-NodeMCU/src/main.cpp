@@ -3,17 +3,20 @@
 #include <ESPAsyncTCP.h>
 #include <ESPAsyncWebServer.h>
 #include <LittleFS.h>
+#include <SPI.h>
+#include <mcp_can.h>
 
 const char AP_SSID[] = "TLP-Klappen";
 const char AP_PASSWORD[] = "tlp12345"; // WPA2, >= 8 chars
 const uint8_t AP_CHANNEL = 1;
 const bool AP_HIDDEN = false;
 const uint8_t AP_MAX_CLIENTS = 4;
-const uint8_t RELAY_PIN = D7;
 const bool RELAY_ACTIVE_HIGH = true;
 const uint8_t ONBOARD_LED_PIN = LED_BUILTIN;
 const bool ONBOARD_LED_ACTIVE_LOW = true;
 const uint8_t SENSOR_PIN = A0;
+const uint8_t MCP2515_CS_PIN = D1;
+const uint8_t MCP2515_INT_PIN = D0;
 const uint8_t BASELINE_FILTER_SHIFT = 4; // 1/16 IIR baseline smoothing
 const uint8_t ENVELOPE_DECAY_SHIFT = 2;  // Faster decay = smaller value
 const unsigned long SENSOR_SAMPLE_INTERVAL_MS = 50; // Keeps ADC from starving WiFi DHCP on ESP8266
@@ -21,12 +24,14 @@ const unsigned long MANUAL_OVERRIDE_MS = 10000;
 const int HIT_THRESHOLD = 60;
 const unsigned long TELEPLOT_INTERVAL_MS = 50;
 const unsigned long DEBUG_INTERVAL_MS = 200;
+const unsigned long CAN_STATUS_INTERVAL_MS = 5000;
 
 bool debugStreamingEnabled = false;
 bool teleplotStreamingEnabled = false;
 
 unsigned long lastDebugAtMs = 0;
 unsigned long lastTeleplotAtMs = 0;
+unsigned long lastCanStatusAtMs = 0;
 
 unsigned long lastStatusAtMs = 0;
 const unsigned long STATUS_INTERVAL_MS = 3000;
@@ -45,11 +50,286 @@ int lastBaseline = 0;
 int lastCentered = 0;
 unsigned long lastSensorSampleAtMs = 0;
 
+bool canControllerDetected = false;
+bool canLoopbackPassed = false;
+bool canNormalModeActive = false;
+uint32_t canRxFrameCount = 0;
+uint32_t canRxIgnoredCount = 0;
+
+INT8U detectedCanClock = MCP_8MHZ;
+MCP_CAN canController(MCP2515_CS_PIN);
+
 AsyncWebServer webServer(80);
 AsyncEventSource webEvents("/events");
 
 WiFiEventHandler wifiApStationConnectedHandler;
 WiFiEventHandler wifiApStationDisconnectedHandler;
+
+const __FlashStringHelper *canClockToText(INT8U clockSel)
+{
+  if (clockSel == MCP_8MHZ) return F("8MHz");
+  if (clockSel == MCP_16MHZ) return F("16MHz");
+  if (clockSel == MCP_10MHZ) return F("10MHz");
+  return F("unknown");
+}
+
+bool detectCanControllerClock()
+{
+  struct ClockCandidate
+  {
+    INT8U clock;
+    const __FlashStringHelper *label;
+  };
+
+  const ClockCandidate candidates[] = {
+    {MCP_8MHZ, F("8MHz")},
+    {MCP_16MHZ, F("16MHz")},
+    {MCP_10MHZ, F("10MHz")},
+  };
+
+  for (uint8_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++)
+  {
+    Serial.print(F("CAN init probe "));
+    Serial.print(candidates[i].label);
+    Serial.println(F(" ..."));
+
+    const INT8U initResult = canController.begin(MCP_ANY, CAN_125KBPS, candidates[i].clock);
+    if (initResult == CAN_OK)
+    {
+      detectedCanClock = candidates[i].clock;
+      canControllerDetected = true;
+      Serial.print(F("CAN init OK with "));
+      Serial.println(candidates[i].label);
+      return true;
+    }
+
+    Serial.print(F("CAN init failed code="));
+    Serial.println(initResult);
+
+    // Some MCP2515 + level-shifter combinations complete config/bitrate setup
+    // but fail the library's return-to-previous-mode step. In that case we still
+    // have SPI communication and can force mode transitions explicitly.
+    const INT8U configModeResult = canController.setMode(MODE_CONFIG);
+    if (configModeResult == CAN_OK)
+    {
+      detectedCanClock = candidates[i].clock;
+      canControllerDetected = true;
+      Serial.print(F("CAN fallback: config mode OK with "));
+      Serial.println(candidates[i].label);
+      return true;
+    }
+
+    Serial.print(F("CAN fallback config mode failed code="));
+    Serial.println(configModeResult);
+  }
+
+  canControllerDetected = false;
+  return false;
+}
+
+bool runCanControllerSelfTest()
+{
+  canLoopbackPassed = false;
+  canNormalModeActive = false;
+
+  if (!detectCanControllerClock())
+  {
+    Serial.println(F("CAN SELFTEST FAIL: no SPI communication with MCP2515"));
+    return false;
+  }
+
+  bool loopbackModeOk = false;
+  for (uint8_t retry = 0; retry < 5; retry++)
+  {
+    if (canController.setMode(MCP_LOOPBACK) == CAN_OK)
+    {
+      loopbackModeOk = true;
+      break;
+    }
+    delay(10);
+  }
+
+  if (!loopbackModeOk)
+  {
+    Serial.println(F("CAN SELFTEST PARTIAL: config mode works, loopback mode unavailable"));
+    return true;
+  }
+
+  INT8U txData[2] = {0xA5, 0x5A};
+  const INT32U txId = 0x321;
+
+  if (canController.sendMsgBuf(txId, 0, 2, txData) != CAN_OK)
+  {
+    Serial.println(F("CAN SELFTEST FAIL: loopback send failed"));
+    return false;
+  }
+
+  const unsigned long startMs = millis();
+  while (millis() - startMs < 120)
+  {
+    if (canController.checkReceive() == CAN_MSGAVAIL)
+    {
+      INT32U rxId = 0;
+      INT8U rxLen = 0;
+      INT8U rxData[8] = {0};
+      if (canController.readMsgBuf(&rxId, &rxLen, rxData) != CAN_OK)
+      {
+        Serial.println(F("CAN SELFTEST FAIL: loopback read failed"));
+        return false;
+      }
+
+      if (rxId == txId && rxLen == 2 && rxData[0] == txData[0] && rxData[1] == txData[1])
+      {
+        canLoopbackPassed = true;
+        Serial.print(F("CAN SELFTEST PASS: MCP2515 reachable, clock="));
+        Serial.println(canClockToText(detectedCanClock));
+        return true;
+      }
+
+      Serial.println(F("CAN SELFTEST FAIL: loopback payload mismatch"));
+      return false;
+    }
+  }
+
+  Serial.println(F("CAN SELFTEST FAIL: no loopback frame received"));
+  return false;
+}
+
+bool switchToCanNormalMode()
+{
+  if (!canControllerDetected)
+  {
+    Serial.println(F("CAN NORMAL MODE FAIL: controller not detected"));
+    canNormalModeActive = false;
+    return false;
+  }
+
+  INT8U modeResult = CAN_FAIL;
+  for (uint8_t retry = 0; retry < 5; retry++)
+  {
+    modeResult = canController.setMode(MCP_NORMAL);
+    if (modeResult == CAN_OK)
+    {
+      break;
+    }
+    delay(10);
+  }
+
+  if (modeResult != CAN_OK)
+  {
+    Serial.print(F("CAN NORMAL MODE FAIL code="));
+    Serial.println(modeResult);
+    canNormalModeActive = false;
+    return false;
+  }
+
+  canNormalModeActive = true;
+  Serial.println(F("CAN NORMAL MODE OK"));
+  return true;
+}
+
+void pollCanFrames()
+{
+  if (!canNormalModeActive)
+  {
+    return;
+  }
+
+  while (canController.checkReceive() == CAN_MSGAVAIL)
+  {
+    INT32U rxId = 0;
+    INT8U rxLen = 0;
+    INT8U rxData[8] = {0};
+    const INT8U rxResult = canController.readMsgBuf(&rxId, &rxLen, rxData);
+    if (rxResult != CAN_OK)
+    {
+      Serial.print(F("CAN RX FAIL code="));
+      Serial.println(rxResult);
+      break;
+    }
+
+    canRxFrameCount++;
+    const bool isExtended = (rxId & CAN_IS_EXTENDED) != 0;
+    const bool isRtr = (rxId & CAN_IS_REMOTE_REQUEST) != 0;
+    const uint32_t cleanId = isExtended ? (rxId & CAN_EXTENDED_ID) : (rxId & 0x7FFu);
+
+    // For TLP-CAN/1 bring-up we expect standard 11-bit data frames.
+    // Extended/RTR frames are logged as ignored to spot bus corruption quickly.
+    if (isExtended || isRtr)
+    {
+      canRxIgnoredCount++;
+      // Print first 5 ext/rtr frames to diagnose misclassification
+      if (canRxIgnoredCount <= 5u)
+      {
+        Serial.print(F("CAN RX ext/rtr #"));
+        Serial.print(canRxIgnoredCount);
+        Serial.print(F(" raw_id=0x"));
+        Serial.print(rxId, HEX);
+        Serial.print(F(" clean_id=0x"));
+        Serial.print(cleanId, HEX);
+        Serial.print(F(" ext="));
+        Serial.print(isExtended ? 1 : 0);
+        Serial.print(F(" rtr="));
+        Serial.print(isRtr ? 1 : 0);
+        Serial.print(F(" len="));
+        Serial.println(rxLen);
+      }
+      else if ((canRxIgnoredCount % 25u) == 0u)
+      {
+        Serial.print(F("CAN RX ignored ext/rtr frames="));
+        Serial.println(canRxIgnoredCount);
+      }
+      continue;
+    }
+
+    const uint8_t parsedPriority = static_cast<uint8_t>((cleanId >> 9) & 0x03u);
+    const uint8_t parsedMsgType = static_cast<uint8_t>((cleanId >> 5) & 0x0Fu);
+    const uint8_t parsedNodeId = static_cast<uint8_t>(cleanId & 0x1Fu);
+
+    Serial.print(F("CAN RX id=0x"));
+    Serial.print(cleanId, HEX);
+    Serial.print(F(" ext="));
+    Serial.print(isExtended ? 1 : 0);
+    Serial.print(F(" rtr="));
+    Serial.print(isRtr ? 1 : 0);
+    Serial.print(F(" pri="));
+    Serial.print(parsedPriority);
+    Serial.print(F(" type=0x"));
+    Serial.print(parsedMsgType, HEX);
+    Serial.print(F(" node=0x"));
+    Serial.print(parsedNodeId, HEX);
+    Serial.print(F(" len="));
+    Serial.print(rxLen);
+    Serial.print(F(" count="));
+    Serial.println(canRxFrameCount);
+  }
+}
+
+void printCanStatus(unsigned long nowMs)
+{
+  if (nowMs - lastCanStatusAtMs < CAN_STATUS_INTERVAL_MS)
+  {
+    return;
+  }
+
+  lastCanStatusAtMs = nowMs;
+  Serial.print(F("CAN status detected="));
+  Serial.print(canControllerDetected ? 1 : 0);
+  Serial.print(F(" loopback="));
+  Serial.print(canLoopbackPassed ? 1 : 0);
+  Serial.print(F(" normal="));
+  Serial.print(canNormalModeActive ? 1 : 0);
+  Serial.print(F(" clock="));
+  Serial.print(canClockToText(detectedCanClock));
+  Serial.print(F(" rx_count="));
+  Serial.print(canRxFrameCount);
+  Serial.print(F(" rx_ignored="));
+  Serial.print(canRxIgnoredCount);
+  Serial.print(F(" rx_err="));
+  Serial.print(canController.errorCountRX());
+  Serial.print(F(" tx_err="));
+  Serial.println(canController.errorCountTX());
+}
 
 enum class ControlAction
 {
@@ -82,7 +362,7 @@ bool setThresholdValue(int value, bool printFeedback)
 void setFlap(bool moveUp)
 {
   flapIsUp = moveUp;
-  digitalWrite(RELAY_PIN, moveUp == RELAY_ACTIVE_HIGH ? HIGH : LOW);
+  (void)RELAY_ACTIVE_HIGH;
   digitalWrite(ONBOARD_LED_PIN, moveUp == ONBOARD_LED_ACTIVE_LOW ? LOW : HIGH);
 }
 
@@ -180,6 +460,10 @@ void printHelp()
   Serial.println(F("  r = reset latch"));
   Serial.println(F("  d = toggle debug stream"));
   Serial.println(F("  p = toggle teleplot stream"));
+  Serial.println(F("  c = run MCP2515 selftest"));
+  Serial.println(F("  n = switch MCP2515 to normal mode"));
+  Serial.println(F("  k = print CAN status now"));
+  Serial.println(F("  x = send one test CAN frame (TX transceiver test)"));
   Serial.println(F("  s=<0..1023> = set threshold"));
   Serial.println(F("  ? = this help"));
 }
@@ -213,6 +497,40 @@ void processSerialCommand(const char *command)
     Serial.print(F("CMD teleplot_stream="));
     Serial.println(teleplotStreamingEnabled ? F("on") : F("off"));
   }
+  else if (single == 'c' || single == 'C')
+  {
+    Serial.println(F("CMD can_selftest"));
+    if (runCanControllerSelfTest())
+    {
+      switchToCanNormalMode();
+    }
+  }
+  else if (single == 'n' || single == 'N')
+  {
+    Serial.println(F("CMD can_normal_mode"));
+    switchToCanNormalMode();
+  }
+  else if (single == 'k' || single == 'K')
+  {
+    lastCanStatusAtMs = 0;
+    printCanStatus(millis());
+  }
+  else if (single == 'x' || single == 'X')
+  {
+    if (!canNormalModeActive)
+    {
+      Serial.println(F("CMD can_tx_test SKIP: not in normal mode"));
+    }
+    else
+    {
+      INT8U testData[4] = {0xDE, 0xAD, 0xBE, 0xEF};
+      const INT32U testId = 0x7FF;
+      const INT8U txResult = canController.sendMsgBuf(testId, 0, 4, testData);
+      Serial.print(F("CMD can_tx_test id=0x7FF code="));
+      Serial.print(txResult);
+      Serial.println(txResult == CAN_OK ? F(" OK") : F(" FAIL"));
+    }
+  }
   else if (single == '?') printHelp();
 }
 
@@ -228,7 +546,8 @@ void handleSerial()
     // One-letter commands fire immediately, before buffering.
     if (len == 0 && (c=='u'||c=='U'||c=='l'||c=='L'||c=='t'||c=='T'||
                      c=='a'||c=='A'||c=='r'||c=='R'||c=='d'||c=='D'||
-                     c=='p'||c=='P'||c=='?'))
+                     c=='p'||c=='P'||c=='c'||c=='C'||c=='n'||c=='N'||
+                     c=='k'||c=='K'||c=='x'||c=='X'||c=='?'))
     {
       buf[0] = c; buf[1] = '\0'; processSerialCommand(buf);
       continue;
@@ -296,6 +615,19 @@ String buildStatusJson()
   json += lastTriggerEnvelope;
   json += F(",\"lastTriggerAt\":");
   json += lastTriggerAtMs;
+  json += F(",\"canDetected\":");
+  json += canControllerDetected ? 1 : 0;
+  json += F(",\"canLoopback\":");
+  json += canLoopbackPassed ? 1 : 0;
+  json += F(",\"canNormal\":");
+  json += canNormalModeActive ? 1 : 0;
+  json += F(",\"canRxCount\":");
+  json += canRxFrameCount;
+  json += F(",\"canClockMHz\":");
+  if (detectedCanClock == MCP_8MHZ) json += 8;
+  else if (detectedCanClock == MCP_16MHZ) json += 16;
+  else if (detectedCanClock == MCP_10MHZ) json += 10;
+  else json += 0;
   json += F("}");
   return json;
 }
@@ -367,8 +699,8 @@ void streamApStatus()
 
 void setup()
 {
-  pinMode(RELAY_PIN, OUTPUT);
   pinMode(ONBOARD_LED_PIN, OUTPUT);
+  pinMode(MCP2515_INT_PIN, INPUT);
   setFlap(true);
 
   Serial.begin(115200);
@@ -376,6 +708,10 @@ void setup()
 
   Serial.println();
   Serial.println(F("TLP-Klappen NodeMCU"));
+  Serial.print(F("CAN prep: cs="));
+  Serial.print(MCP2515_CS_PIN);
+  Serial.print(F(" int="));
+  Serial.println(MCP2515_INT_PIN);
 
   baselineQ8 = static_cast<long>(analogRead(SENSOR_PIN)) << 8;
 
@@ -413,6 +749,11 @@ void setup()
   WiFi.printDiag(Serial);
 
   startWebServer();
+
+  if (runCanControllerSelfTest())
+  {
+    switchToCanNormalMode();
+  }
 
   Serial.print(F("Web URL: http://"));
   Serial.println(WiFi.softAPIP());
@@ -471,6 +812,9 @@ void loop()
     lastTeleplotAtMs = nowMs;
     printTeleplot(nowMs);
   }
+
+  pollCanFrames();
+  printCanStatus(nowMs);
 
   // Automatic hit trigger: envelope over threshold -> flap up + latch.
   if (!manualOverrideEnabled && !hitLatched && envelope >= hitThreshold)
