@@ -14,16 +14,8 @@ const uint8_t AP_MAX_CLIENTS = 4;
 const bool RELAY_ACTIVE_HIGH = true;
 const uint8_t ONBOARD_LED_PIN = LED_BUILTIN;
 const bool ONBOARD_LED_ACTIVE_LOW = true;
-const uint8_t SENSOR_PIN = A0;
 const uint8_t MCP2515_CS_PIN = D1;
 const uint8_t MCP2515_INT_PIN = D0;
-const uint8_t BASELINE_FILTER_SHIFT = 4; // 1/16 IIR baseline smoothing
-const uint8_t ENVELOPE_DECAY_SHIFT = 2;  // Faster decay = smaller value
-const unsigned long SENSOR_SAMPLE_INTERVAL_MS = 50; // Keeps ADC from starving WiFi DHCP on ESP8266
-const unsigned long MANUAL_OVERRIDE_MS = 10000;
-const int HIT_THRESHOLD = 60;
-const unsigned long TELEPLOT_INTERVAL_MS = 50;
-const unsigned long DEBUG_INTERVAL_MS = 200;
 const unsigned long CAN_STATUS_INTERVAL_MS = 5000;
 const unsigned long SSE_STREAM_INTERVAL_MS = 4000;
 const uint8_t CAN_RX_MAX_FRAMES_PER_POLL = 6;
@@ -38,7 +30,6 @@ const uint8_t TLP_CAN_MSG_RESULT = 0x4;
 const uint8_t TLP_CAN_PRIORITY_COMMAND = 0b01;
 const uint8_t TLP_CAN_PRIORITY_CYCLIC = 0b10;
 const uint8_t TLP_CAN_MAX_NODES = 32;
-const uint8_t ATMEGA_NODE_ID = 0x11;
 const uint8_t MAX_PENDING_COMMANDS = 8;
 const unsigned long PENDING_COMMAND_TTL_MS = 15000;
 
@@ -52,29 +43,12 @@ const uint8_t CAN_FLAP_TOGGLE = 2;
 const uint8_t CAN_FLAP_AUTO = 3;
 const uint8_t CAN_FLAP_RESET = 4;
 
-bool debugStreamingEnabled = false;
-bool teleplotStreamingEnabled = false;
-
-unsigned long lastDebugAtMs = 0;
-unsigned long lastTeleplotAtMs = 0;
 unsigned long lastCanStatusAtMs = 0;
 
 unsigned long lastStatusAtMs = 0;
 const unsigned long STATUS_INTERVAL_MS = 10000;
 bool flapIsUp = false;
 bool manualOverrideEnabled = false;
-bool hitLatched = false;
-int hitThreshold = HIT_THRESHOLD;
-unsigned long manualOverrideUntilMs = 0;
-long baselineQ8 = 0;
-int envelope = 0;
-int lastTriggerRaw = -1;
-int lastTriggerEnvelope = -1;
-unsigned long lastTriggerAtMs = 0;
-int lastRaw = 0;
-int lastBaseline = 0;
-int lastCentered = 0;
-unsigned long lastSensorSampleAtMs = 0;
 
 bool canControllerDetected = false;
 bool canLoopbackPassed = false;
@@ -360,15 +334,10 @@ void updateNodeHeartbeat(uint8_t parsedPriority, uint8_t nodeId, const INT8U *rx
   state.lastHeartbeatAtMs = nowMs;
   state.heartbeatCount++;
 
-  // Mirror remote actuator state into gateway/UI model.
-  if (nodeId == ATMEGA_NODE_ID)
-  {
-    const bool remoteRelayPulseActive = (state.statusFlags & (1u << 2)) != 0;
-    const bool remoteAutoMode = (state.statusFlags & (1u << 1)) != 0;
-    flapIsUp = !remoteRelayPulseActive;
-    manualOverrideEnabled = !remoteAutoMode;
-    manualOverrideUntilMs = 0;
-  }
+  const bool remoteRelayPulseActive = (state.statusFlags & (1u << 2)) != 0;
+  const bool remoteAutoMode = (state.statusFlags & (1u << 1)) != 0;
+  flapIsUp = !remoteRelayPulseActive;
+  manualOverrideEnabled = !remoteAutoMode;
 }
 
 const __FlashStringHelper *canClockToText(INT8U clockSel)
@@ -657,45 +626,7 @@ void printCanStatus(unsigned long nowMs)
   Serial.print(canResultFrameCount);
   Serial.print(F(" online_nodes="));
   Serial.print(countOnlineNodes(nowMs));
-
-  const NodeState &node11 = nodeStates[0x11];
-  Serial.print(F(" node11_online="));
-  Serial.print(isNodeOnline(node11, nowMs) ? 1 : 0);
-  Serial.print(F(" node11_hb="));
-  Serial.print(node11.heartbeatCount);
-  Serial.print(F(" node11_uptime_s="));
-  Serial.print(node11.uptimeSeconds);
-  Serial.print(F(" node11_reboots="));
-  Serial.println(node11.rebootCount);
-}
-
-enum class ControlAction
-{
-  FlapUp,
-  FlapDown,
-  FlapToggle,
-  AutoMode,
-  ResetLatch
-};
-
-bool sendCanFlapCommandImmediate(uint8_t targetNodeId, uint8_t flapCommand)
-{
-  INT8U payload[1] = {flapCommand};
-  return sendCanCommand(targetNodeId, TLP_CAN_MSG_FLAP_COMMAND, 0, payload, 1);
-}
-
-bool sendCanThresholdImmediate(uint8_t targetNodeId, int threshold)
-{
-  if (threshold < 0 || threshold > 1023)
-  {
-    return false;
-  }
-
-  INT8U payload[2] = {
-    static_cast<INT8U>(threshold & 0xFF),
-    static_cast<INT8U>((threshold >> 8) & 0xFF)
-  };
-  return sendCanCommand(targetNodeId, TLP_CAN_MSG_SET_THRESHOLD, 0, payload, 2);
+  Serial.println();
 }
 
 void setFlap(bool moveUp)
@@ -703,184 +634,6 @@ void setFlap(bool moveUp)
   flapIsUp = moveUp;
   (void)RELAY_ACTIVE_HIGH;
   digitalWrite(ONBOARD_LED_PIN, moveUp == ONBOARD_LED_ACTIVE_LOW ? LOW : HIGH);
-}
-
-void printTeleplot(unsigned long nowMs)
-{
-  Serial.print(F(">sensor_raw:"));
-  Serial.print(nowMs); Serial.print(':'); Serial.println(lastRaw);
-  Serial.print(F(">sensor_envelope:"));
-  Serial.print(nowMs); Serial.print(':'); Serial.println(envelope);
-  Serial.print(F(">flap_state:"));
-  Serial.print(nowMs); Serial.print(':'); Serial.println(flapIsUp ? 1 : 0);
-  Serial.print(F(">hitThreshold:"));
-  Serial.print(nowMs); Serial.print(':'); Serial.println(hitThreshold);
-}
-
-void printSample(unsigned long nowMs)
-{
-  Serial.print(F("SAMPLE ms=")); Serial.print(nowMs);
-  Serial.print(F(" raw="));      Serial.print(lastRaw);
-  Serial.print(F(" baseline=")); Serial.print(lastBaseline);
-  Serial.print(F(" centered=")); Serial.print(lastCentered);
-  Serial.print(F(" envelope=")); Serial.print(envelope);
-  Serial.print(F(" thr="));      Serial.print(hitThreshold);
-  Serial.print(F(" latched="));  Serial.print(hitLatched ? 1 : 0);
-  Serial.print(F(" mode="));     Serial.print(manualOverrideEnabled ? F("manual") : F("auto"));
-  Serial.print(F(" flap="));     Serial.println(flapIsUp ? 1 : 0);
-}
-
-void printHelp()
-{
-  Serial.println(F("Commands:"));
-  Serial.println(F("  u = flap up"));
-  Serial.println(F("  l = flap down"));
-  Serial.println(F("  t = toggle flap"));
-  Serial.println(F("  a = auto mode"));
-  Serial.println(F("  r = reset latch"));
-  Serial.println(F("  d = toggle debug stream"));
-  Serial.println(F("  p = toggle teleplot stream"));
-  Serial.println(F("  c = run MCP2515 selftest"));
-  Serial.println(F("  n = switch MCP2515 to normal mode"));
-  Serial.println(F("  k = print CAN status now"));
-  Serial.println(F("  x = send one test CAN frame (TX transceiver test)"));
-  Serial.println(F("  s=<0..1023> = set threshold"));
-  Serial.println(F("  ? = this help"));
-}
-
-void processSerialCommand(const char *command)
-{
-  if (command[0] == '\0') return;
-
-  if ((command[0] == 's' || command[0] == 'S') && command[1] == '=')
-  {
-    const long parsed = strtol(command + 2, nullptr, 10);
-    const int threshold = static_cast<int>(parsed);
-    if (threshold < 0 || threshold > 1023)
-    {
-      Serial.println(F("CMD threshold invalid (expected 0..1023)"));
-      return;
-    }
-
-    if (sendCanThresholdImmediate(ATMEGA_NODE_ID, threshold))
-    {
-      Serial.print(F("CMD can threshold queued value="));
-      Serial.println(threshold);
-    }
-    else
-    {
-      Serial.println(F("CMD can threshold failed"));
-    }
-    return;
-  }
-
-  const char single = command[0];
-  if (single == 'u' || single == 'U')
-  {
-    Serial.println(sendCanFlapCommandImmediate(ATMEGA_NODE_ID, CAN_FLAP_UP)
-      ? F("CMD can flap=up queued")
-      : F("CMD can flap=up failed"));
-  }
-  else if (single == 'l' || single == 'L')
-  {
-    Serial.println(sendCanFlapCommandImmediate(ATMEGA_NODE_ID, CAN_FLAP_DOWN)
-      ? F("CMD can flap=down queued")
-      : F("CMD can flap=down failed"));
-  }
-  else if (single == 't' || single == 'T')
-  {
-    Serial.println(sendCanFlapCommandImmediate(ATMEGA_NODE_ID, CAN_FLAP_TOGGLE)
-      ? F("CMD can flap=toggle queued")
-      : F("CMD can flap=toggle failed"));
-  }
-  else if (single == 'a' || single == 'A')
-  {
-    Serial.println(sendCanFlapCommandImmediate(ATMEGA_NODE_ID, CAN_FLAP_AUTO)
-      ? F("CMD can flap=auto queued")
-      : F("CMD can flap=auto failed"));
-  }
-  else if (single == 'r' || single == 'R')
-  {
-    Serial.println(sendCanFlapCommandImmediate(ATMEGA_NODE_ID, CAN_FLAP_RESET)
-      ? F("CMD can flap=reset queued")
-      : F("CMD can flap=reset failed"));
-  }
-  else if (single == 'd' || single == 'D')
-  {
-    debugStreamingEnabled = !debugStreamingEnabled;
-    Serial.print(F("CMD debug_stream="));
-    Serial.println(debugStreamingEnabled ? F("on") : F("off"));
-  }
-  else if (single == 'p' || single == 'P')
-  {
-    teleplotStreamingEnabled = !teleplotStreamingEnabled;
-    Serial.print(F("CMD teleplot_stream="));
-    Serial.println(teleplotStreamingEnabled ? F("on") : F("off"));
-  }
-  else if (single == 'c' || single == 'C')
-  {
-    Serial.println(F("CMD can_selftest"));
-    if (runCanControllerSelfTest())
-    {
-      switchToCanNormalMode();
-    }
-  }
-  else if (single == 'n' || single == 'N')
-  {
-    Serial.println(F("CMD can_normal_mode"));
-    switchToCanNormalMode();
-  }
-  else if (single == 'k' || single == 'K')
-  {
-    lastCanStatusAtMs = 0;
-    printCanStatus(millis());
-  }
-  else if (single == 'x' || single == 'X')
-  {
-    if (!canNormalModeActive)
-    {
-      Serial.println(F("CMD can_tx_test SKIP: not in normal mode"));
-    }
-    else
-    {
-      INT8U testData[4] = {0xDE, 0xAD, 0xBE, 0xEF};
-      const INT32U testId = 0x7FF;
-      const INT8U txResult = canController.sendMsgBuf(testId, 0, 4, testData);
-      Serial.print(F("CMD can_tx_test id=0x7FF code="));
-      Serial.print(txResult);
-      Serial.println(txResult == CAN_OK ? F(" OK") : F(" FAIL"));
-    }
-  }
-  else if (single == '?') printHelp();
-}
-
-void handleSerial()
-{
-  static char buf[32];
-  static uint8_t len = 0;
-
-  while (Serial.available() > 0)
-  {
-    const char c = static_cast<char>(Serial.read());
-
-    // One-letter commands fire immediately, before buffering.
-    if (len == 0 && (c=='u'||c=='U'||c=='l'||c=='L'||c=='t'||c=='T'||
-                     c=='a'||c=='A'||c=='r'||c=='R'||c=='d'||c=='D'||
-                     c=='p'||c=='P'||c=='c'||c=='C'||c=='n'||c=='N'||
-                     c=='k'||c=='K'||c=='x'||c=='X'||c=='?'))
-    {
-      buf[0] = c; buf[1] = '\0'; processSerialCommand(buf);
-      continue;
-    }
-
-    if (c == '\n' || c == '\r')
-    {
-      if (len > 0) { buf[len] = '\0'; processSerialCommand(buf); len = 0; }
-      continue;
-    }
-
-    if (len < sizeof(buf) - 1) buf[len++] = c;
-  }
 }
 
 void printApStatus()
@@ -913,27 +666,9 @@ void writeStatusJson(Print &out, bool includeExtendedNodes)
   out.print(F("\""));
   out.print(F(",\"flap\":"));
   out.print(flapIsUp ? 1 : 0);
-  out.print(F(",\"latched\":"));
-  out.print(hitLatched ? 1 : 0);
   out.print(F(",\"mode\":\""));
   out.print(manualOverrideEnabled ? F("manual") : F("auto"));
   out.print(F("\""));
-  out.print(F(",\"threshold\":"));
-  out.print(hitThreshold);
-  out.print(F(",\"raw\":"));
-  out.print(lastRaw);
-  out.print(F(",\"baseline\":"));
-  out.print(lastBaseline);
-  out.print(F(",\"centered\":"));
-  out.print(lastCentered);
-  out.print(F(",\"envelope\":"));
-  out.print(envelope);
-  out.print(F(",\"lastTriggerRaw\":"));
-  out.print(lastTriggerRaw);
-  out.print(F(",\"lastTriggerEnvelope\":"));
-  out.print(lastTriggerEnvelope);
-  out.print(F(",\"lastTriggerAt\":"));
-  out.print(lastTriggerAtMs);
   out.print(F(",\"canDetected\":"));
   out.print(canControllerDetected ? 1 : 0);
   out.print(F(",\"canLoopback\":"));
@@ -953,30 +688,6 @@ void writeStatusJson(Print &out, bool includeExtendedNodes)
   else if (detectedCanClock == MCP_16MHZ) out.print(16);
   else if (detectedCanClock == MCP_10MHZ) out.print(10);
   else out.print(0);
-
-  const NodeState &node11 = nodeStates[0x11];
-  out.print(F(",\"node11\":{"));
-  out.print(F("\"seen\":"));
-  out.print(node11.seen ? 1 : 0);
-  out.print(F(",\"online\":"));
-  out.print(isNodeOnline(node11, nowMs) ? 1 : 0);
-  out.print(F(",\"heartbeatCount\":"));
-  out.print(node11.heartbeatCount);
-  out.print(F(",\"rebootCount\":"));
-  out.print(node11.rebootCount);
-  out.print(F(",\"statusFlags\":"));
-  out.print(node11.statusFlags);
-  out.print(F(",\"protoMajor\":"));
-  out.print(node11.protoMajor);
-  out.print(F(",\"protoMinor\":"));
-  out.print(node11.protoMinor);
-  out.print(F(",\"fwVersion\":"));
-  out.print(node11.fwVersion);
-  out.print(F(",\"uptimeSeconds\":"));
-  out.print(node11.uptimeSeconds);
-  out.print(F(",\"lastHeartbeatMs\":"));
-  out.print(node11.lastHeartbeatAtMs);
-  out.print(F("}"));
 
   if (includeExtendedNodes)
   {
@@ -1057,7 +768,7 @@ void sendCommandResultResponse(AsyncWebServerRequest *request, const PendingComm
   request->send(response);
 }
 
-bool parseNodeIdParam(AsyncWebServerRequest *request, uint8_t defaultNodeId, uint8_t &nodeId)
+bool parseNodeIdParam(AsyncWebServerRequest *request, uint8_t &nodeId)
 {
   String nodeValue;
   if (request->hasParam("node", true))
@@ -1071,8 +782,7 @@ bool parseNodeIdParam(AsyncWebServerRequest *request, uint8_t defaultNodeId, uin
 
   if (nodeValue.length() == 0)
   {
-    nodeId = defaultNodeId;
-    return true;
+    return false;
   }
 
   const long parsedNode = strtol(nodeValue.c_str(), nullptr, 10);
@@ -1103,27 +813,9 @@ String buildStatusJson(bool includeExtendedNodes)
   json += F("\"");
   json += F(",\"flap\":");
   json += flapIsUp ? 1 : 0;
-  json += F(",\"latched\":");
-  json += hitLatched ? 1 : 0;
   json += F(",\"mode\":\"");
   json += manualOverrideEnabled ? F("manual") : F("auto");
   json += F("\"");
-  json += F(",\"threshold\":");
-  json += hitThreshold;
-  json += F(",\"raw\":");
-  json += lastRaw;
-  json += F(",\"baseline\":");
-  json += lastBaseline;
-  json += F(",\"centered\":");
-  json += lastCentered;
-  json += F(",\"envelope\":");
-  json += envelope;
-  json += F(",\"lastTriggerRaw\":");
-  json += lastTriggerRaw;
-  json += F(",\"lastTriggerEnvelope\":");
-  json += lastTriggerEnvelope;
-  json += F(",\"lastTriggerAt\":");
-  json += lastTriggerAtMs;
   json += F(",\"canDetected\":");
   json += canControllerDetected ? 1 : 0;
   json += F(",\"canLoopback\":");
@@ -1143,30 +835,6 @@ String buildStatusJson(bool includeExtendedNodes)
   else if (detectedCanClock == MCP_16MHZ) json += 16;
   else if (detectedCanClock == MCP_10MHZ) json += 10;
   else json += 0;
-
-  const NodeState &node11 = nodeStates[0x11];
-  json += F(",\"node11\":{");
-  json += F("\"seen\":");
-  json += node11.seen ? 1 : 0;
-  json += F(",\"online\":");
-  json += isNodeOnline(node11, nowMs) ? 1 : 0;
-  json += F(",\"heartbeatCount\":");
-  json += node11.heartbeatCount;
-  json += F(",\"rebootCount\":");
-  json += node11.rebootCount;
-  json += F(",\"statusFlags\":");
-  json += node11.statusFlags;
-  json += F(",\"protoMajor\":");
-  json += node11.protoMajor;
-  json += F(",\"protoMinor\":");
-  json += node11.protoMinor;
-  json += F(",\"fwVersion\":");
-  json += node11.fwVersion;
-  json += F(",\"uptimeSeconds\":");
-  json += node11.uptimeSeconds;
-  json += F(",\"lastHeartbeatMs\":");
-  json += node11.lastHeartbeatAtMs;
-  json += F("}");
 
   if (includeExtendedNodes)
   {
@@ -1228,10 +896,10 @@ void startWebServer()
     else if (action == "reset")  flapCommand = CAN_FLAP_RESET;
     else { request->send(400, "application/json", "{\"error\":\"invalid action\"}"); return; }
 
-    uint8_t targetNodeId = ATMEGA_NODE_ID;
-    if (!parseNodeIdParam(request, ATMEGA_NODE_ID, targetNodeId))
+    uint8_t targetNodeId = 0;
+    if (!parseNodeIdParam(request, targetNodeId))
     {
-      request->send(400, "application/json", "{\"error\":\"invalid node\"}");
+      request->send(400, "application/json", "{\"error\":\"missing or invalid node\"}");
       return;
     }
 
@@ -1265,10 +933,10 @@ void startWebServer()
     if (threshold < 0 || threshold > 1023)
     { request->send(400, "application/json", "{\"error\":\"value out of range\"}"); return; }
 
-    uint8_t targetNodeId = ATMEGA_NODE_ID;
-    if (!parseNodeIdParam(request, ATMEGA_NODE_ID, targetNodeId))
+    uint8_t targetNodeId = 0;
+    if (!parseNodeIdParam(request, targetNodeId))
     {
-      request->send(400, "application/json", "{\"error\":\"invalid node\"}");
+      request->send(400, "application/json", "{\"error\":\"missing or invalid node\"}");
       return;
     }
 
@@ -1390,8 +1058,6 @@ void setup()
   Serial.print(F(" int="));
   Serial.println(MCP2515_INT_PIN);
 
-  baselineQ8 = static_cast<long>(analogRead(SENSOR_PIN)) << 8;
-
   if (!LittleFS.begin())
   {
     Serial.println(F("LittleFS mount failed! Run: pio run -t uploadfs"));
@@ -1434,7 +1100,6 @@ void setup()
 
   Serial.print(F("Web URL: http://"));
   Serial.println(WiFi.softAPIP());
-  printHelp();
 }
 
 void loop()
@@ -1443,25 +1108,10 @@ void loop()
 
   cleanupExpiredPendingCommands(nowMs);
 
-  handleSerial();
-
-
   if (nowMs - lastStatusAtMs >= STATUS_INTERVAL_MS)
   {
     lastStatusAtMs = nowMs;
     printApStatus();
-  }
-
-  if (debugStreamingEnabled && (nowMs - lastDebugAtMs >= DEBUG_INTERVAL_MS))
-  {
-    lastDebugAtMs = nowMs;
-    printSample(nowMs);
-  }
-
-  if (teleplotStreamingEnabled && (nowMs - lastTeleplotAtMs >= TELEPLOT_INTERVAL_MS))
-  {
-    lastTeleplotAtMs = nowMs;
-    printTeleplot(nowMs);
   }
 
   pollCanFrames();
