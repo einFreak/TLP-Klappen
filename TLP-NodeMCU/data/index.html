@@ -7,26 +7,31 @@
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <!-- Flap card template: cloned per flap in app.js -->
   <template id="flap-card-template">
     <div class="flap-card" data-flap-id="">
-      <div class="flap-visual" role="button" tabindex="0" aria-label="Details öffnen" data-flap-visual="">
+      <div class="flap-visual" role="button" tabindex="0" aria-label="Details oeffnen" data-flap-visual="">
         <img class="flap-svg flap-up" src="/flap-up.svg" alt="Klappe hoch">
         <img class="flap-svg flap-down" src="/flap-down.svg" alt="Klappe gefallen">
       </div>
       <div class="flap-metrics">
         <div class="metric-pill"><span>State</span><strong data-field="flapState">-</strong></div>
         <div class="metric-pill"><span>Mode</span><strong data-field="flapMode" class="badge">-</strong></div>
-        <div class="metric-pill"><span>Latch</span><strong data-field="flapLatch" class="badge">-</strong></div>
+        <div class="metric-pill"><span>Online</span><strong data-field="flapOnline" class="badge">-</strong></div>
         <div class="metric-pill"><span>Threshold</span><strong data-field="flapThreshold">-</strong></div>
         <div class="metric-pill wide"><span>Last Trigger Raw</span><strong data-field="lastTriggerRaw">-</strong></div>
       </div>
       <section class="flap-detail-panel" aria-hidden="true">
         <header class="detail-header">
-          <h2 data-field="cardLabel">Klappe</h2>
-          <button class="icon-btn" type="button" aria-label="Close details" data-close-detail="">✕</button>
+          <h2 data-field="cardLabel">Node</h2>
+          <button class="icon-btn" type="button" aria-label="Close details" data-close-detail="X">X</button>
         </header>
         <div class="detail-grid">
+          <div class="detail-item"><span>Node</span><strong data-field="detailNodeId">-</strong></div>
+          <div class="detail-item"><span>Online</span><strong data-field="detailOnline">-</strong></div>
+          <div class="detail-item"><span>Heartbeat</span><strong data-field="detailHeartbeat">-</strong></div>
+          <div class="detail-item"><span>Reboots</span><strong data-field="detailReboots">-</strong></div>
+          <div class="detail-item"><span>Status Flags</span><strong data-field="detailFlags">-</strong></div>
+          <div class="detail-item"><span>Uptime (s)</span><strong data-field="detailUptime">-</strong></div>
           <div class="detail-item"><span>Zustand</span><strong data-field="detailState">-</strong></div>
           <div class="detail-item"><span>Mode</span><strong data-field="detailMode">-</strong></div>
           <div class="detail-item"><span>Trigger Raw</span><strong data-field="detailTriggerRaw">-</strong></div>
@@ -56,7 +61,7 @@
     <section class="stage-panel">
       <header class="stage-header">
         <h1>TLP Klappenstand</h1>
-        <p>Single-Flap Stage</p>
+        <p>Multi-Node Stage</p>
       </header>
 
       <div id="flapStage" class="flap-stage"></div>

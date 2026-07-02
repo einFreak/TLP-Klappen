@@ -1045,6 +1045,8 @@ void sendCommandAcceptedResponse(AsyncWebServerRequest *request, const PendingCo
   AsyncResponseStream *response = request->beginResponseStream("application/json");
   response->print(F("{\"ok\":1,\"pending\":1,\"requestId\":"));
   response->print(entry.requestId);
+  response->print(F(",\"node\":"));
+  response->print(entry.targetNodeId);
   response->print(F("}"));
   response->setCode(202);
   request->send(response);
@@ -1055,6 +1057,10 @@ void sendCommandResultResponse(AsyncWebServerRequest *request, const PendingComm
   AsyncResponseStream *response = request->beginResponseStream("application/json");
   response->print(F("{\"requestId\":"));
   response->print(entry.requestId);
+  response->print(F(",\"node\":"));
+  response->print(entry.targetNodeId);
+  response->print(F(",\"msgType\":"));
+  response->print(entry.msgType);
   response->print(F(",\"state\":\""));
   response->print(pendingStateToText(entry.state));
   response->print(F("\",\"done\":"));
@@ -1067,6 +1073,34 @@ void sendCommandResultResponse(AsyncWebServerRequest *request, const PendingComm
   response->print(entry.data1);
   response->print(F("}"));
   request->send(response);
+}
+
+bool parseNodeIdParam(AsyncWebServerRequest *request, uint8_t defaultNodeId, uint8_t &nodeId)
+{
+  String nodeValue;
+  if (request->hasParam("node", true))
+  {
+    nodeValue = request->getParam("node", true)->value();
+  }
+  else if (request->hasParam("node"))
+  {
+    nodeValue = request->getParam("node")->value();
+  }
+
+  if (nodeValue.length() == 0)
+  {
+    nodeId = defaultNodeId;
+    return true;
+  }
+
+  const long parsedNode = strtol(nodeValue.c_str(), nullptr, 10);
+  if (parsedNode < 0 || parsedNode > 31)
+  {
+    return false;
+  }
+
+  nodeId = static_cast<uint8_t>(parsedNode);
+  return true;
 }
 
 String buildStatusJson(bool includeExtendedNodes)
@@ -1212,8 +1246,15 @@ void startWebServer()
     else if (action == "reset")  flapCommand = CAN_FLAP_RESET;
     else { request->send(400, "application/json", "{\"error\":\"invalid action\"}"); return; }
 
+    uint8_t targetNodeId = ATMEGA_NODE_ID;
+    if (!parseNodeIdParam(request, ATMEGA_NODE_ID, targetNodeId))
+    {
+      request->send(400, "application/json", "{\"error\":\"invalid node\"}");
+      return;
+    }
+
     const unsigned long nowMs = millis();
-    PendingCommand *pending = reservePendingCommand(ATMEGA_NODE_ID, TLP_CAN_MSG_FLAP_COMMAND, nowMs);
+    PendingCommand *pending = reservePendingCommand(targetNodeId, TLP_CAN_MSG_FLAP_COMMAND, nowMs);
     if (pending == nullptr)
     {
       request->send(503, "application/json", "{\"error\":\"pending queue full\"}");
@@ -1221,7 +1262,7 @@ void startWebServer()
     }
 
     INT8U payload[1] = {flapCommand};
-    if (!sendCanCommand(ATMEGA_NODE_ID, TLP_CAN_MSG_FLAP_COMMAND, pending->requestId, payload, 1))
+    if (!sendCanCommand(targetNodeId, TLP_CAN_MSG_FLAP_COMMAND, pending->requestId, payload, 1))
     {
       pending->state = PendingCommandState::SendFailed;
       pending->updatedAtMs = nowMs;
@@ -1256,8 +1297,15 @@ void startWebServer()
     if (threshold < 0 || threshold > 1023)
     { request->send(400, "application/json", "{\"error\":\"value out of range\"}"); return; }
 
+    uint8_t targetNodeId = ATMEGA_NODE_ID;
+    if (!parseNodeIdParam(request, ATMEGA_NODE_ID, targetNodeId))
+    {
+      request->send(400, "application/json", "{\"error\":\"invalid node\"}");
+      return;
+    }
+
     const unsigned long nowMs = millis();
-    PendingCommand *pending = reservePendingCommand(ATMEGA_NODE_ID, TLP_CAN_MSG_SET_THRESHOLD, nowMs);
+    PendingCommand *pending = reservePendingCommand(targetNodeId, TLP_CAN_MSG_SET_THRESHOLD, nowMs);
     if (pending == nullptr)
     {
       request->send(503, "application/json", "{\"error\":\"pending queue full\"}");
@@ -1268,7 +1316,7 @@ void startWebServer()
       static_cast<INT8U>(threshold & 0xFF),
       static_cast<INT8U>((threshold >> 8) & 0xFF)
     };
-    if (!sendCanCommand(ATMEGA_NODE_ID, TLP_CAN_MSG_SET_THRESHOLD, pending->requestId, payload, 2))
+    if (!sendCanCommand(targetNodeId, TLP_CAN_MSG_SET_THRESHOLD, pending->requestId, payload, 2))
     {
       pending->state = PendingCommandState::SendFailed;
       pending->updatedAtMs = nowMs;
