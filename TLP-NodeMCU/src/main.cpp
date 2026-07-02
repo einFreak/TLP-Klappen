@@ -123,6 +123,7 @@ struct NodeState
   uint8_t sensorSummaryCounter;
   unsigned long lastSensorSummaryAtMs;
   uint32_t lastUpDurationMs;
+  uint8_t lastUpEventCounter;
   unsigned long lastFlapTimingAtMs;
 };
 
@@ -414,7 +415,7 @@ void updateNodeSensorSummary(uint8_t parsedPriority, uint8_t nodeId, const INT8U
 
 void updateNodeFlapTiming(uint8_t parsedPriority, uint8_t nodeId, const INT8U *rxData, INT8U rxLen, unsigned long nowMs)
 {
-  if (rxLen < 4)
+  if (rxLen < 5)
   {
     return;
   }
@@ -428,6 +429,7 @@ void updateNodeFlapTiming(uint8_t parsedPriority, uint8_t nodeId, const INT8U *r
                            (static_cast<uint32_t>(rxData[1]) << 8) |
                            (static_cast<uint32_t>(rxData[2]) << 16) |
                            (static_cast<uint32_t>(rxData[3]) << 24);
+  state.lastUpEventCounter = rxData[4];
   state.lastFlapTimingAtMs = nowMs;
 }
 
@@ -826,6 +828,8 @@ void writeStatusJson(Print &out, bool includeExtendedNodes)
       out.print(state.noiseFloor);
       out.print(F(",\"lastUpTimeMs\":"));
       out.print(state.lastUpDurationMs);
+      out.print(F(",\"lastUpEventCounter\":"));
+      out.print(state.lastUpEventCounter);
       out.print(F("}"));
     }
     out.print(F("]"));
@@ -981,6 +985,8 @@ String buildStatusJson(bool includeExtendedNodes)
       json += state.noiseFloor;
       json += F(",\"lastUpTimeMs\":");
       json += state.lastUpDurationMs;
+      json += F(",\"lastUpEventCounter\":");
+      json += state.lastUpEventCounter;
       json += F("}");
     }
     json += F("]");

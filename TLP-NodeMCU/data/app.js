@@ -5,8 +5,11 @@
 const LS_KEY = 'tlp_layout';
 const STAGE_HEIGHT_KEY = 'tlp_stage_height';
 const KNOWN_FLAPS_KEY = 'tlp_known_flaps';
+const UP_TIME_HISTORY_KEY = 'tlp_up_time_history';
+const MAX_UP_TIME_SAMPLES = 20;
 
 let persistedLayout = {};
+let persistedUpTimeHistory = {};
 
 const state = {
   flaps: [],
@@ -96,6 +99,103 @@ function saveKnownFlaps() {
   } catch (_) {}
 }
 
+function loadUpTimeHistory() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(UP_TIME_HISTORY_KEY) || '{}');
+    persistedUpTimeHistory = (stored && typeof stored === 'object') ? stored : {};
+  } catch (_) {
+    persistedUpTimeHistory = {};
+  }
+}
+
+function normalizeHistoryEntry(entry) {
+  if (!entry || typeof entry !== 'object') {
+    return { samples: [], lastEventCounter: -1 };
+  }
+
+  const rawSamples = Array.isArray(entry.samples) ? entry.samples : [];
+  const samples = rawSamples
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value) && value >= 0)
+    .map((value) => Math.round(value))
+    .slice(-MAX_UP_TIME_SAMPLES);
+
+  const eventCounter = Number(entry.lastEventCounter);
+  const lastEventCounter = Number.isFinite(eventCounter)
+    ? Math.max(0, Math.min(255, Math.trunc(eventCounter)))
+    : -1;
+
+  return { samples, lastEventCounter };
+}
+
+function readPersistedHistoryForFlap(flapId) {
+  const entry = persistedUpTimeHistory[flapId];
+  return normalizeHistoryEntry(entry);
+}
+
+function saveUpTimeHistory() {
+  const next = {};
+  state.flaps.forEach((flap) => {
+    const hasSamples = Array.isArray(flap.upTimeHistoryMs) && flap.upTimeHistoryMs.length > 0;
+    const hasCounter = Number.isFinite(flap.lastUpEventCounter) && flap.lastUpEventCounter >= 0;
+    if (!hasSamples && !hasCounter) {
+      return;
+    }
+
+    next[flap.id] = {
+      samples: hasSamples ? flap.upTimeHistoryMs.slice(-MAX_UP_TIME_SAMPLES) : [],
+      lastEventCounter: hasCounter ? Math.trunc(flap.lastUpEventCounter) : -1,
+    };
+  });
+
+  persistedUpTimeHistory = next;
+  try {
+    localStorage.setItem(UP_TIME_HISTORY_KEY, JSON.stringify(next));
+  } catch (_) {}
+}
+
+function computeHistoryStats(samples) {
+  if (!Array.isArray(samples) || samples.length === 0) {
+    return null;
+  }
+
+  const sorted = samples.slice().sort((a, b) => a - b);
+  const count = sorted.length;
+  const sum = sorted.reduce((acc, value) => acc + value, 0);
+  const average = Math.round(sum / count);
+  const median = (count % 2 === 1)
+    ? sorted[(count - 1) / 2]
+    : Math.round((sorted[(count / 2) - 1] + sorted[count / 2]) / 2);
+
+  return { count, average, median };
+}
+
+function recordUpTimeSample(flap, upTimeMs, eventCounterRaw) {
+  const eventCounter = Number(eventCounterRaw);
+  if (!Number.isFinite(eventCounter)) {
+    return;
+  }
+
+  const normalizedEventCounter = Math.max(0, Math.min(255, Math.trunc(eventCounter)));
+  if (flap.lastUpEventCounter === normalizedEventCounter) {
+    return;
+  }
+
+  flap.lastUpEventCounter = normalizedEventCounter;
+
+  const sample = Number(upTimeMs);
+  if (!Number.isFinite(sample) || sample < 0) {
+    saveUpTimeHistory();
+    return;
+  }
+
+  flap.upTimeHistoryMs.push(Math.round(sample));
+  if (flap.upTimeHistoryMs.length > MAX_UP_TIME_SAMPLES) {
+    flap.upTimeHistoryMs = flap.upTimeHistoryMs.slice(-MAX_UP_TIME_SAMPLES);
+  }
+  saveUpTimeHistory();
+}
+
 function loadKnownFlaps() {
   try {
     const raw = JSON.parse(localStorage.getItem(KNOWN_FLAPS_KEY) || '[]');
@@ -113,6 +213,7 @@ function ensureFlapModel(nodeId) {
   const id = flapIdFromNode(nodeId);
   let flap = state.flaps.find((f) => f.id === id);
   if (!flap) {
+    const persistedHistory = readPersistedHistoryForFlap(id);
     flap = {
       id,
       nodeId,
@@ -135,6 +236,8 @@ function ensureFlapModel(nodeId) {
       sensorPeak: 0,
       sensorNoise: 0,
       lastUpTimeMs: 0,
+      lastUpEventCounter: persistedHistory.lastEventCounter,
+      upTimeHistoryMs: persistedHistory.samples,
       commandState: 'idle',
       commandText: 'Bereit',
       detailOpen: false,
@@ -205,6 +308,8 @@ function renderDetailPanel() {
 
   detailPanel.inert = false;
   detailPanel.setAttribute('aria-hidden', 'false');
+
+  const historyStats = computeHistoryStats(openFlap.upTimeHistoryMs);
   
   // Update all fields
   const fields = {
@@ -221,6 +326,9 @@ function renderDetailPanel() {
     detailSensorPeak: String(openFlap.sensorPeak),
     detailSensorNoise: String(openFlap.sensorNoise),
     detailLastUpTime: String(openFlap.lastUpTimeMs) + ' ms',
+    detailReactionAvg: historyStats ? String(historyStats.average) + ' ms' : '-',
+    detailReactionMedian: historyStats ? String(historyStats.median) + ' ms' : '-',
+    detailReactionSamples: historyStats ? String(historyStats.count) : '0',
     detailThreshold: String(openFlap.threshold),
   };
 
@@ -393,7 +501,9 @@ function applyStatus(data) {
       flap.sensorRaw = finiteOr(node.sensorRaw, flap.sensorRaw);
       flap.sensorPeak = finiteOr(node.sensorPeak, flap.sensorPeak);
       flap.sensorNoise = finiteOr(node.sensorNoise, flap.sensorNoise);
-      flap.lastUpTimeMs = finiteOr(node.lastUpTimeMs, flap.lastUpTimeMs);
+      const nextLastUpTimeMs = finiteOr(node.lastUpTimeMs, flap.lastUpTimeMs);
+      flap.lastUpTimeMs = nextLastUpTimeMs;
+      recordUpTimeSample(flap, nextLastUpTimeMs, node.lastUpEventCounter);
 
       flap.isUp = computeNodeFlapState(node);
       flap.mode = (flap.flags & (1 << 1)) !== 0 ? 'auto' : 'manual';
@@ -450,6 +560,7 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   loadLayout();
+  loadUpTimeHistory();
   loadKnownFlaps();
   render();
   renderDetailPanel();
