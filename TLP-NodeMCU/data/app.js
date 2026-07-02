@@ -332,6 +332,26 @@ function render() {
   renderNetwork();
 }
 
+async function postBulkFlapAction(action) {
+  const onlineFlaps = state.flaps.filter((f) => f.online);
+  if (onlineFlaps.length === 0) {
+    text('connectionStatus', 'Keine Online-Flaps gefunden');
+    return;
+  }
+
+  text('connectionStatus', 'Sende Sammelaktion...');
+  const results = await Promise.allSettled(
+    onlineFlaps.map((flap) => postFlapAction(flap.id, action))
+  );
+
+  const failed = results.filter((r) => r.status === 'rejected').length;
+  if (failed > 0) {
+    text('connectionStatus', 'Sammelaktion teilweise fehlgeschlagen (' + failed + ')');
+  } else {
+    text('connectionStatus', 'Sammelaktion abgeschlossen (' + onlineFlaps.length + ' Flaps)');
+  }
+}
+
 function computeNodeFlapState(node) {
   const flags = Number(node.flags) || 0;
   const isRelayPulseActive = (flags & (1 << 2)) !== 0;
@@ -405,6 +425,8 @@ function applyStatus(data) {
 document.addEventListener('DOMContentLoaded', () => {
   const stage = document.getElementById('flapStage');
   const stageResizeHandle = document.getElementById('flapStageResizeHandle');
+  const allFlapsUpBtn = document.getElementById('allFlapsUpBtn');
+  const allFlapsDownBtn = document.getElementById('allFlapsDownBtn');
   const detailPanel = document.getElementById('detailPanel');
   const closeBtn = document.getElementById('closeDetailBtn');
 
@@ -474,6 +496,15 @@ document.addEventListener('DOMContentLoaded', () => {
     stageResizeHandle.addEventListener('pointerup', finishResize);
     stageResizeHandle.addEventListener('pointercancel', finishResize);
   }
+
+  allFlapsUpBtn?.addEventListener('click', () => {
+    // RESET on ATmega sets flap up and enables AUTO mode.
+    postBulkFlapAction('reset');
+  });
+
+  allFlapsDownBtn?.addEventListener('click', () => {
+    postBulkFlapAction('down');
+  });
 
   // Simplified handler for all card interactions
   if (stage) {

@@ -99,6 +99,33 @@ body {
   background: rgba(249, 115, 22, 0.7);
 }
 
+.stage-bulk-actions {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.stage-bulk-actions button {
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  background: #303a46;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.stage-bulk-actions button:hover {
+  background: #3a4655;
+}
+
+.stage-bulk-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .flap-card {
   display: flex;
   flex-direction: row;
