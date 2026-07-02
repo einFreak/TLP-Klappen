@@ -32,7 +32,25 @@ const uint16_t STATUS_JSON_RESERVE_COMPACT = 560;
 const uint16_t STATUS_JSON_RESERVE_FULL = 900;
 const unsigned long NODE_HEARTBEAT_TIMEOUT_MS = 3500;
 const uint8_t TLP_CAN_MSG_HEARTBEAT = 0x1;
+const uint8_t TLP_CAN_MSG_SET_THRESHOLD = 0x2;
+const uint8_t TLP_CAN_MSG_FLAP_COMMAND = 0x3;
+const uint8_t TLP_CAN_MSG_RESULT = 0x4;
+const uint8_t TLP_CAN_PRIORITY_COMMAND = 0b01;
+const uint8_t TLP_CAN_PRIORITY_CYCLIC = 0b10;
 const uint8_t TLP_CAN_MAX_NODES = 32;
+const uint8_t ATMEGA_NODE_ID = 0x11;
+const uint8_t MAX_PENDING_COMMANDS = 8;
+const unsigned long PENDING_COMMAND_TTL_MS = 15000;
+
+const uint8_t CAN_RESULT_OK = 0;
+const uint8_t CAN_RESULT_INVALID_ARG = 1;
+const uint8_t CAN_RESULT_UNSUPPORTED = 2;
+
+const uint8_t CAN_FLAP_UP = 0;
+const uint8_t CAN_FLAP_DOWN = 1;
+const uint8_t CAN_FLAP_TOGGLE = 2;
+const uint8_t CAN_FLAP_AUTO = 3;
+const uint8_t CAN_FLAP_RESET = 4;
 
 bool debugStreamingEnabled = false;
 bool teleplotStreamingEnabled = false;
@@ -63,6 +81,49 @@ bool canLoopbackPassed = false;
 bool canNormalModeActive = false;
 uint32_t canRxFrameCount = 0;
 uint32_t canRxIgnoredCount = 0;
+uint32_t canResultFrameCount = 0;
+uint32_t canResultSequence = 0;
+
+struct CanCommandResult
+{
+  bool valid;
+  uint8_t sourceNodeId;
+  uint8_t requestMsgType;
+  uint8_t requestId;
+  uint8_t status;
+  uint8_t data0;
+  uint8_t data1;
+  uint32_t sequence;
+  unsigned long receivedAtMs;
+};
+
+CanCommandResult lastCanCommandResult = {};
+
+enum class PendingCommandState : uint8_t
+{
+  Pending = 0,
+  Ack = 1,
+  Nack = 2,
+  SendFailed = 3,
+  Expired = 4,
+};
+
+struct PendingCommand
+{
+  bool used;
+  uint8_t requestId;
+  uint8_t targetNodeId;
+  uint8_t msgType;
+  PendingCommandState state;
+  uint8_t resultStatus;
+  uint8_t data0;
+  uint8_t data1;
+  unsigned long createdAtMs;
+  unsigned long updatedAtMs;
+};
+
+PendingCommand pendingCommands[MAX_PENDING_COMMANDS] = {};
+uint8_t nextRequestId = 1;
 
 struct NodeState
 {
@@ -75,6 +136,8 @@ struct NodeState
   uint8_t protoMinor;
   uint8_t fwVersion;
   uint32_t uptimeSeconds;
+  uint32_t lastUptimeSeconds;
+  uint32_t rebootCount;
   unsigned long lastHeartbeatAtMs;
   uint32_t heartbeatCount;
 };
@@ -90,9 +153,162 @@ AsyncEventSource webEvents("/events");
 WiFiEventHandler wifiApStationConnectedHandler;
 WiFiEventHandler wifiApStationDisconnectedHandler;
 
+void pollCanFrames();
+
+const __FlashStringHelper *pendingStateToText(PendingCommandState state)
+{
+  if (state == PendingCommandState::Pending) return F("pending");
+  if (state == PendingCommandState::Ack) return F("ack");
+  if (state == PendingCommandState::Nack) return F("nack");
+  if (state == PendingCommandState::SendFailed) return F("send_failed");
+  return F("expired");
+}
+
+void cleanupExpiredPendingCommands(unsigned long nowMs)
+{
+  for (uint8_t i = 0; i < MAX_PENDING_COMMANDS; i++)
+  {
+    PendingCommand &entry = pendingCommands[i];
+    if (!entry.used)
+    {
+      continue;
+    }
+
+    if (entry.state == PendingCommandState::Pending && (nowMs - entry.createdAtMs) > PENDING_COMMAND_TTL_MS)
+    {
+      entry.state = PendingCommandState::Expired;
+      entry.updatedAtMs = nowMs;
+    }
+
+    if (entry.state != PendingCommandState::Pending && (nowMs - entry.updatedAtMs) > PENDING_COMMAND_TTL_MS)
+    {
+      entry.used = false;
+    }
+  }
+}
+
+PendingCommand *findPendingCommand(uint8_t requestId)
+{
+  for (uint8_t i = 0; i < MAX_PENDING_COMMANDS; i++)
+  {
+    if (pendingCommands[i].used && pendingCommands[i].requestId == requestId)
+    {
+      return &pendingCommands[i];
+    }
+  }
+  return nullptr;
+}
+
+PendingCommand *reservePendingCommand(uint8_t targetNodeId, uint8_t msgType, unsigned long nowMs)
+{
+  cleanupExpiredPendingCommands(nowMs);
+
+  PendingCommand *slot = nullptr;
+  for (uint8_t i = 0; i < MAX_PENDING_COMMANDS; i++)
+  {
+    if (!pendingCommands[i].used)
+    {
+      slot = &pendingCommands[i];
+      break;
+    }
+  }
+
+  if (slot == nullptr)
+  {
+    return nullptr;
+  }
+
+  slot->used = true;
+  slot->requestId = nextRequestId++;
+  if (nextRequestId == 0)
+  {
+    nextRequestId = 1;
+  }
+  slot->targetNodeId = targetNodeId;
+  slot->msgType = msgType;
+  slot->state = PendingCommandState::Pending;
+  slot->resultStatus = 0xFF;
+  slot->data0 = 0;
+  slot->data1 = 0;
+  slot->createdAtMs = nowMs;
+  slot->updatedAtMs = nowMs;
+  return slot;
+}
+
 NodeState &getNodeState(uint8_t nodeId)
 {
   return nodeStates[nodeId & 0x1Fu];
+}
+
+uint16_t buildCanId(uint8_t priority, uint8_t msgType, uint8_t nodeId)
+{
+  return (static_cast<uint16_t>(priority & 0x03u) << 9) |
+         (static_cast<uint16_t>(msgType & 0x0Fu) << 5) |
+         static_cast<uint16_t>(nodeId & 0x1Fu);
+}
+
+void rememberCanResult(uint8_t sourceNodeId, const INT8U *rxData, INT8U rxLen, unsigned long nowMs)
+{
+  if (rxLen < 3)
+  {
+    return;
+  }
+
+  canResultFrameCount++;
+  canResultSequence++;
+  lastCanCommandResult.valid = true;
+  lastCanCommandResult.sourceNodeId = sourceNodeId;
+  lastCanCommandResult.requestMsgType = rxData[0];
+  lastCanCommandResult.requestId = rxData[1];
+  lastCanCommandResult.status = rxData[2];
+  lastCanCommandResult.data0 = rxLen >= 4 ? rxData[3] : 0;
+  lastCanCommandResult.data1 = rxLen >= 5 ? rxData[4] : 0;
+  lastCanCommandResult.sequence = canResultSequence;
+  lastCanCommandResult.receivedAtMs = nowMs;
+
+  PendingCommand *pending = findPendingCommand(lastCanCommandResult.requestId);
+  if (pending != nullptr &&
+      pending->targetNodeId == sourceNodeId &&
+      pending->msgType == lastCanCommandResult.requestMsgType)
+  {
+    pending->resultStatus = lastCanCommandResult.status;
+    pending->data0 = lastCanCommandResult.data0;
+    pending->data1 = lastCanCommandResult.data1;
+    pending->updatedAtMs = nowMs;
+    pending->state = (lastCanCommandResult.status == CAN_RESULT_OK)
+      ? PendingCommandState::Ack
+      : PendingCommandState::Nack;
+  }
+}
+
+bool sendCanCommand(uint8_t targetNodeId,
+                    uint8_t requestMsgType,
+                    uint8_t requestId,
+                    const INT8U *payload,
+                    INT8U payloadLen)
+{
+  if (!canNormalModeActive)
+  {
+    return false;
+  }
+
+  const uint16_t canId = buildCanId(TLP_CAN_PRIORITY_COMMAND, requestMsgType, targetNodeId);
+  INT8U txPayload[8] = {0};
+  txPayload[0] = requestId;
+  const INT8U safeLen = payloadLen > 7 ? 7 : payloadLen;
+  for (INT8U i = 0; i < safeLen; i++)
+  {
+    txPayload[i + 1] = payload[i];
+  }
+
+  const INT8U txResult = canController.sendMsgBuf(canId, 0, safeLen + 1, txPayload);
+  if (txResult != CAN_OK)
+  {
+    Serial.print(F("CAN CMD tx_fail code="));
+    Serial.println(txResult);
+    return false;
+  }
+  return true;
 }
 
 bool isNodeOnline(const NodeState &state, unsigned long nowMs)
@@ -130,12 +346,29 @@ void updateNodeHeartbeat(uint8_t parsedPriority, uint8_t nodeId, const INT8U *rx
   state.fwVersion = rxData[2];
   state.statusFlags = rxData[3];
   // ATmega heartbeat encodes uptime as little-endian bytes 4..7.
-  state.uptimeSeconds = static_cast<uint32_t>(rxData[4]) |
-                        (static_cast<uint32_t>(rxData[5]) << 8) |
-                        (static_cast<uint32_t>(rxData[6]) << 16) |
-                        (static_cast<uint32_t>(rxData[7]) << 24);
+  const uint32_t parsedUptimeSeconds = static_cast<uint32_t>(rxData[4]) |
+                                       (static_cast<uint32_t>(rxData[5]) << 8) |
+                                       (static_cast<uint32_t>(rxData[6]) << 16) |
+                                       (static_cast<uint32_t>(rxData[7]) << 24);
+  if (state.heartbeatCount > 0 && parsedUptimeSeconds < state.uptimeSeconds)
+  {
+    state.rebootCount++;
+  }
+
+  state.lastUptimeSeconds = state.uptimeSeconds;
+  state.uptimeSeconds = parsedUptimeSeconds;
   state.lastHeartbeatAtMs = nowMs;
   state.heartbeatCount++;
+
+  // Mirror remote actuator state into gateway/UI model.
+  if (nodeId == ATMEGA_NODE_ID)
+  {
+    const bool remoteRelayPulseActive = (state.statusFlags & (1u << 2)) != 0;
+    flapIsUp = !remoteRelayPulseActive;
+    // Gateway should not auto-expire into local manual mode for remote commands.
+    manualOverrideEnabled = false;
+    manualOverrideUntilMs = 0;
+  }
 }
 
 const __FlashStringHelper *canClockToText(INT8U clockSel)
@@ -366,6 +599,10 @@ void pollCanFrames()
     {
       updateNodeHeartbeat(parsedPriority, parsedNodeId, rxData, rxLen, nowMs);
     }
+    else if (parsedMsgType == TLP_CAN_MSG_RESULT)
+    {
+      rememberCanResult(parsedNodeId, rxData, rxLen, nowMs);
+    }
 
     if ((canRxFrameCount <= 5u) || ((canRxFrameCount % CAN_RX_LOG_EVERY_N) == 0u))
     {
@@ -416,6 +653,8 @@ void printCanStatus(unsigned long nowMs)
   Serial.print(canController.errorCountRX());
   Serial.print(F(" tx_err="));
   Serial.print(canController.errorCountTX());
+  Serial.print(F(" result_count="));
+  Serial.print(canResultFrameCount);
   Serial.print(F(" online_nodes="));
   Serial.print(countOnlineNodes(nowMs));
 
@@ -425,7 +664,9 @@ void printCanStatus(unsigned long nowMs)
   Serial.print(F(" node11_hb="));
   Serial.print(node11.heartbeatCount);
   Serial.print(F(" node11_uptime_s="));
-  Serial.println(node11.uptimeSeconds);
+  Serial.print(node11.uptimeSeconds);
+  Serial.print(F(" node11_reboots="));
+  Serial.println(node11.rebootCount);
 }
 
 enum class ControlAction
@@ -721,6 +962,8 @@ void writeStatusJson(Print &out, bool includeExtendedNodes)
   out.print(canRxFrameCount);
   out.print(F(",\"canRxIgnored\":"));
   out.print(canRxIgnoredCount);
+  out.print(F(",\"canResultCount\":"));
+  out.print(canResultFrameCount);
   out.print(F(",\"onlineNodes\":"));
   out.print(countOnlineNodes(nowMs));
   out.print(F(",\"canClockMHz\":"));
@@ -737,6 +980,8 @@ void writeStatusJson(Print &out, bool includeExtendedNodes)
   out.print(isNodeOnline(node11, nowMs) ? 1 : 0);
   out.print(F(",\"heartbeatCount\":"));
   out.print(node11.heartbeatCount);
+  out.print(F(",\"rebootCount\":"));
+  out.print(node11.rebootCount);
   out.print(F(",\"statusFlags\":"));
   out.print(node11.statusFlags);
   out.print(F(",\"protoMajor\":"));
@@ -775,6 +1020,8 @@ void writeStatusJson(Print &out, bool includeExtendedNodes)
       out.print(isNodeOnline(state, nowMs) ? 1 : 0);
       out.print(F(",\"hb\":"));
       out.print(state.heartbeatCount);
+      out.print(F(",\"reboots\":"));
+      out.print(state.rebootCount);
       out.print(F(",\"flags\":"));
       out.print(state.statusFlags);
       out.print(F(",\"uptimeSeconds\":"));
@@ -790,6 +1037,35 @@ void sendStatusJsonResponse(AsyncWebServerRequest *request, bool includeExtended
 {
   AsyncResponseStream *response = request->beginResponseStream("application/json");
   writeStatusJson(*response, includeExtendedNodes);
+  request->send(response);
+}
+
+void sendCommandAcceptedResponse(AsyncWebServerRequest *request, const PendingCommand &entry)
+{
+  AsyncResponseStream *response = request->beginResponseStream("application/json");
+  response->print(F("{\"ok\":1,\"pending\":1,\"requestId\":"));
+  response->print(entry.requestId);
+  response->print(F("}"));
+  response->setCode(202);
+  request->send(response);
+}
+
+void sendCommandResultResponse(AsyncWebServerRequest *request, const PendingCommand &entry)
+{
+  AsyncResponseStream *response = request->beginResponseStream("application/json");
+  response->print(F("{\"requestId\":"));
+  response->print(entry.requestId);
+  response->print(F(",\"state\":\""));
+  response->print(pendingStateToText(entry.state));
+  response->print(F("\",\"done\":"));
+  response->print(entry.state == PendingCommandState::Pending ? 0 : 1);
+  response->print(F(",\"status\":"));
+  response->print(entry.resultStatus);
+  response->print(F(",\"data0\":"));
+  response->print(entry.data0);
+  response->print(F(",\"data1\":"));
+  response->print(entry.data1);
+  response->print(F("}"));
   request->send(response);
 }
 
@@ -842,6 +1118,8 @@ String buildStatusJson(bool includeExtendedNodes)
   json += canRxFrameCount;
   json += F(",\"canRxIgnored\":");
   json += canRxIgnoredCount;
+  json += F(",\"canResultCount\":");
+  json += canResultFrameCount;
   json += F(",\"onlineNodes\":");
   json += countOnlineNodes(nowMs);
   json += F(",\"canClockMHz\":");
@@ -858,6 +1136,8 @@ String buildStatusJson(bool includeExtendedNodes)
   json += isNodeOnline(node11, nowMs) ? 1 : 0;
   json += F(",\"heartbeatCount\":");
   json += node11.heartbeatCount;
+  json += F(",\"rebootCount\":");
+  json += node11.rebootCount;
   json += F(",\"statusFlags\":");
   json += node11.statusFlags;
   json += F(",\"protoMajor\":");
@@ -896,6 +1176,8 @@ String buildStatusJson(bool includeExtendedNodes)
       json += isNodeOnline(state, nowMs) ? 1 : 0;
       json += F(",\"hb\":");
       json += state.heartbeatCount;
+      json += F(",\"reboots\":");
+      json += state.rebootCount;
       json += F(",\"flags\":");
       json += state.statusFlags;
       json += F(",\"uptimeSeconds\":");
@@ -922,13 +1204,46 @@ void startWebServer()
     else if (request->hasParam("action"))       action = request->getParam("action")->value();
     action.toLowerCase();
 
-    if      (action == "up")     applyControlAction(ControlAction::FlapUp,     true);
-    else if (action == "down")   applyControlAction(ControlAction::FlapDown,   true);
-    else if (action == "toggle") applyControlAction(ControlAction::FlapToggle, true);
-    else if (action == "auto")   applyControlAction(ControlAction::AutoMode,   true);
-    else if (action == "reset")  applyControlAction(ControlAction::ResetLatch, true);
+    uint8_t flapCommand = CAN_FLAP_TOGGLE;
+    if      (action == "up")     flapCommand = CAN_FLAP_UP;
+    else if (action == "down")   flapCommand = CAN_FLAP_DOWN;
+    else if (action == "toggle") flapCommand = CAN_FLAP_TOGGLE;
+    else if (action == "auto")   flapCommand = CAN_FLAP_AUTO;
+    else if (action == "reset")  flapCommand = CAN_FLAP_RESET;
     else { request->send(400, "application/json", "{\"error\":\"invalid action\"}"); return; }
-    sendStatusJsonResponse(request, true);
+
+    const unsigned long nowMs = millis();
+    PendingCommand *pending = reservePendingCommand(ATMEGA_NODE_ID, TLP_CAN_MSG_FLAP_COMMAND, nowMs);
+    if (pending == nullptr)
+    {
+      request->send(503, "application/json", "{\"error\":\"pending queue full\"}");
+      return;
+    }
+
+    INT8U payload[1] = {flapCommand};
+    if (!sendCanCommand(ATMEGA_NODE_ID, TLP_CAN_MSG_FLAP_COMMAND, pending->requestId, payload, 1))
+    {
+      pending->state = PendingCommandState::SendFailed;
+      pending->updatedAtMs = nowMs;
+      request->send(503, "application/json", "{\"error\":\"can send failed\"}");
+      return;
+    }
+
+    // Keep immediate UX feedback lightweight; authoritative state arrives via heartbeat/result frames.
+    if (action == "up")
+    {
+      setFlap(true);
+    }
+    else if (action == "down")
+    {
+      setFlap(false);
+    }
+    else if (action == "toggle")
+    {
+      setFlap(!flapIsUp);
+    }
+
+    sendCommandAcceptedResponse(request, *pending);
   });
 
   webServer.on("/api/threshold", HTTP_POST, [](AsyncWebServerRequest *request) {
@@ -937,9 +1252,63 @@ void startWebServer()
     else if (request->hasParam("value"))       val = request->getParam("value")->value();
     if (val.length() == 0) { request->send(400, "application/json", "{\"error\":\"missing value\"}"); return; }
     const long parsed = strtol(val.c_str(), nullptr, 10);
-    if (!setThresholdValue(static_cast<int>(parsed), true))
+    const int threshold = static_cast<int>(parsed);
+    if (threshold < 0 || threshold > 1023)
     { request->send(400, "application/json", "{\"error\":\"value out of range\"}"); return; }
-    sendStatusJsonResponse(request, true);
+
+    const unsigned long nowMs = millis();
+    PendingCommand *pending = reservePendingCommand(ATMEGA_NODE_ID, TLP_CAN_MSG_SET_THRESHOLD, nowMs);
+    if (pending == nullptr)
+    {
+      request->send(503, "application/json", "{\"error\":\"pending queue full\"}");
+      return;
+    }
+
+    INT8U payload[2] = {
+      static_cast<INT8U>(threshold & 0xFF),
+      static_cast<INT8U>((threshold >> 8) & 0xFF)
+    };
+    if (!sendCanCommand(ATMEGA_NODE_ID, TLP_CAN_MSG_SET_THRESHOLD, pending->requestId, payload, 2))
+    {
+      pending->state = PendingCommandState::SendFailed;
+      pending->updatedAtMs = nowMs;
+      request->send(503, "application/json", "{\"error\":\"can send failed\"}");
+      return;
+    }
+
+    // Optimistically mirror remote value in UI state; definitive result arrives via CAN result frame.
+    setThresholdValue(threshold, false);
+    sendCommandAcceptedResponse(request, *pending);
+  });
+
+  webServer.on("/api/command-result", HTTP_GET, [](AsyncWebServerRequest *request) {
+    String idValue;
+    if (request->hasParam("id"))
+    {
+      idValue = request->getParam("id")->value();
+    }
+    else
+    {
+      request->send(400, "application/json", "{\"error\":\"missing id\"}");
+      return;
+    }
+
+    const long parsedId = strtol(idValue.c_str(), nullptr, 10);
+    if (parsedId < 1 || parsedId > 255)
+    {
+      request->send(400, "application/json", "{\"error\":\"invalid id\"}");
+      return;
+    }
+
+    cleanupExpiredPendingCommands(millis());
+    PendingCommand *entry = findPendingCommand(static_cast<uint8_t>(parsedId));
+    if (entry == nullptr)
+    {
+      request->send(404, "application/json", "{\"error\":\"unknown request\"}");
+      return;
+    }
+
+    sendCommandResultResponse(request, *entry);
   });
 
   webEvents.onConnect([](AsyncEventSourceClient *client) {
@@ -1057,6 +1426,8 @@ void setup()
 void loop()
 {
   const unsigned long nowMs = millis();
+
+  cleanupExpiredPendingCommands(nowMs);
 
   handleSerial();
 

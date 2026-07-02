@@ -236,6 +236,26 @@ function setCardBusy(card, busy) {
   });
 }
 
+async function waitForCommandResult(requestId, timeoutMs = 1500) {
+  const start = Date.now();
+
+  while ((Date.now() - start) < timeoutMs) {
+    const res = await fetch('/api/command-result?id=' + encodeURIComponent(requestId));
+    if (!res.ok) {
+      throw new Error('command result lookup failed');
+    }
+
+    const result = await res.json();
+    if (Number(result.done) === 1) {
+      return result;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 80));
+  }
+
+  throw new Error('command timeout');
+}
+
 // POST flap action (up/down/toggle/auto/reset), update UI on success
 async function postFlapAction(flapId, action) {
   const stage = document.getElementById('flapStage');
@@ -243,8 +263,18 @@ async function postFlapAction(flapId, action) {
   setCardBusy(card, true);
   try {
     const res = await fetch('/api/flap?action=' + encodeURIComponent(action), { method: 'POST' });
-    if (!res.ok) throw new Error('flap action failed');
-    applyStatus(await res.json());
+    if (!res.ok) throw new Error('flap action send failed');
+    const accepted = await res.json();
+    if (!accepted || Number(accepted.pending) !== 1 || !accepted.requestId) {
+      throw new Error('invalid command accept response');
+    }
+
+    const result = await waitForCommandResult(accepted.requestId, 1800);
+    if (result.state !== 'ack') {
+      throw new Error('flap action rejected: ' + result.state);
+    }
+
+    updateStatus();
     text('connectionStatus', 'Aktion ausgeführt');
   } catch (err) {
     console.error(err);
@@ -262,8 +292,18 @@ async function postThreshold(flapId, value) {
   try {
     const v = Math.max(0, Math.min(1023, Number(value) || 0));
     const res = await fetch('/api/threshold?value=' + encodeURIComponent(v), { method: 'POST' });
-    if (!res.ok) throw new Error('threshold update failed');
-    applyStatus(await res.json());
+    if (!res.ok) throw new Error('threshold update send failed');
+    const accepted = await res.json();
+    if (!accepted || Number(accepted.pending) !== 1 || !accepted.requestId) {
+      throw new Error('invalid command accept response');
+    }
+
+    const result = await waitForCommandResult(accepted.requestId, 1800);
+    if (result.state !== 'ack') {
+      throw new Error('threshold rejected: ' + result.state);
+    }
+
+    updateStatus();
     text('connectionStatus', 'Schwellwert gesetzt');
   } catch (err) {
     console.error(err);

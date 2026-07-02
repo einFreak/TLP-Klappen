@@ -29,6 +29,19 @@ const unsigned long SHORT_BURNIN_PROGRESS_MS = 60UL * 1000UL;
 const uint8_t CAN_PRIORITY_COMMAND = 0b01;
 const uint8_t CAN_PRIORITY_CYCLIC = 0b10;
 const uint8_t CAN_MSG_HEARTBEAT = 0x1;
+const uint8_t CAN_MSG_SET_THRESHOLD = 0x2;
+const uint8_t CAN_MSG_FLAP_COMMAND = 0x3;
+const uint8_t CAN_MSG_RESULT = 0x4;
+
+const uint8_t CAN_RESULT_OK = 0;
+const uint8_t CAN_RESULT_INVALID_ARG = 1;
+const uint8_t CAN_RESULT_UNSUPPORTED = 2;
+
+const uint8_t CAN_FLAP_UP = 0;
+const uint8_t CAN_FLAP_DOWN = 1;
+const uint8_t CAN_FLAP_TOGGLE = 2;
+const uint8_t CAN_FLAP_AUTO = 3;
+const uint8_t CAN_FLAP_RESET = 4;
 
 int hitThreshold = 60;
 long baselineQ8 = 0;
@@ -58,6 +71,9 @@ uint32_t heartbeatSentCount = 0;
 uint32_t heartbeatErrorCount = 0;
 
 INT8U detectedCanClock = MCP_8MHZ;
+
+void startRelayPulse(unsigned long nowMs);
+void stopRelayPulse();
 
 uint16_t buildCanId(uint8_t priority, uint8_t msgType, uint8_t nodeId) {
   return (static_cast<uint16_t>(priority & 0x03) << 9) |
@@ -125,6 +141,117 @@ void sendHeartbeat(unsigned long nowMs) {
   heartbeatErrorCount++;
   Serial.print(F("CAN HEARTBEAT tx_fail code="));
   Serial.println(txResult);
+}
+
+void sendCanResult(uint8_t requestMsgType, uint8_t requestId, uint8_t status, uint8_t data0, uint8_t data1) {
+  if (!canNormalModeActive) {
+    return;
+  }
+
+  INT8U payload[5] = {requestMsgType, requestId, status, data0, data1};
+  const INT32U canId = buildCanId(CAN_PRIORITY_COMMAND, CAN_MSG_RESULT, NODE_ID);
+  const INT8U txResult = canController.sendMsgBuf(canId, 0, 5, payload);
+  if (txResult != CAN_OK) {
+    Serial.print(F("CAN RESULT tx_fail code="));
+    Serial.println(txResult);
+  }
+}
+
+void handleCanCommand(unsigned long nowMs, uint8_t msgType, const INT8U* payload, INT8U payloadLen) {
+  const uint8_t requestId = payloadLen >= 1 ? payload[0] : 0;
+
+  if (msgType == CAN_MSG_SET_THRESHOLD) {
+    if (payloadLen < 3) {
+      sendCanResult(CAN_MSG_SET_THRESHOLD, requestId, CAN_RESULT_INVALID_ARG, 0, 0);
+      return;
+    }
+
+    const int requestedThreshold = static_cast<int>(payload[1]) |
+                                   (static_cast<int>(payload[2]) << 8);
+    if (requestedThreshold < 0 || requestedThreshold > 1023) {
+      sendCanResult(CAN_MSG_SET_THRESHOLD, requestId, CAN_RESULT_INVALID_ARG, payload[1], payload[2]);
+      return;
+    }
+
+    hitThreshold = requestedThreshold;
+    Serial.print(F("CAN CMD threshold="));
+    Serial.println(hitThreshold);
+    sendCanResult(CAN_MSG_SET_THRESHOLD, requestId, CAN_RESULT_OK,
+                  static_cast<uint8_t>(hitThreshold & 0xFF),
+                  static_cast<uint8_t>((hitThreshold >> 8) & 0xFF));
+    return;
+  }
+
+  if (msgType == CAN_MSG_FLAP_COMMAND) {
+    if (payloadLen < 2) {
+      sendCanResult(CAN_MSG_FLAP_COMMAND, requestId, CAN_RESULT_INVALID_ARG, 0, 0);
+      return;
+    }
+
+    const uint8_t action = payload[1];
+    if (action == CAN_FLAP_UP) {
+      stopRelayPulse();
+      Serial.println(F("CAN CMD flap=up"));
+      sendCanResult(CAN_MSG_FLAP_COMMAND, requestId, CAN_RESULT_OK, action, 0);
+      return;
+    }
+
+    if (action == CAN_FLAP_DOWN || action == CAN_FLAP_TOGGLE) {
+      startRelayPulse(nowMs);
+      Serial.println(F("CAN CMD flap=pulse"));
+      sendCanResult(CAN_MSG_FLAP_COMMAND, requestId, CAN_RESULT_OK, action, 0);
+      return;
+    }
+
+    if (action == CAN_FLAP_AUTO || action == CAN_FLAP_RESET) {
+      if (action == CAN_FLAP_RESET) {
+        eventCounter = 0;
+      }
+      Serial.println(F("CAN CMD flap=mode"));
+      sendCanResult(CAN_MSG_FLAP_COMMAND, requestId, CAN_RESULT_OK, action, 0);
+      return;
+    }
+
+    sendCanResult(CAN_MSG_FLAP_COMMAND, requestId, CAN_RESULT_INVALID_ARG, action, 0);
+    return;
+  }
+
+  sendCanResult(msgType, requestId, CAN_RESULT_UNSUPPORTED, 0, 0);
+}
+
+void pollCanFrames(unsigned long nowMs) {
+  if (!canNormalModeActive) {
+    return;
+  }
+
+  uint8_t processed = 0;
+  while (processed < 4 && canController.checkReceive() == CAN_MSGAVAIL) {
+    INT32U rxId = 0;
+    INT8U rxLen = 0;
+    INT8U rxData[8] = {0};
+    const INT8U rxResult = canController.readMsgBuf(&rxId, &rxLen, rxData);
+    if (rxResult != CAN_OK) {
+      Serial.print(F("CAN RX FAIL code="));
+      Serial.println(rxResult);
+      break;
+    }
+    processed++;
+
+    const bool isExtended = (rxId & CAN_IS_EXTENDED) != 0;
+    const bool isRtr = (rxId & CAN_IS_REMOTE_REQUEST) != 0;
+    if (isExtended || isRtr) {
+      continue;
+    }
+
+    const uint16_t cleanId = static_cast<uint16_t>(rxId & 0x7FFu);
+    const uint8_t msgType = static_cast<uint8_t>((cleanId >> 5) & 0x0Fu);
+    const uint8_t nodeId = static_cast<uint8_t>(cleanId & 0x1Fu);
+    if (nodeId != NODE_ID) {
+      continue;
+    }
+
+    handleCanCommand(nowMs, msgType, rxData, rxLen);
+  }
 }
 
 void printBurnInProgress(unsigned long nowMs) {
@@ -413,6 +540,7 @@ void loop() {
   const unsigned long nowMs = millis();
 
   handleSerial(nowMs);
+  pollCanFrames(nowMs);
 
   lastRaw = analogRead(SENSOR_PIN);
 
