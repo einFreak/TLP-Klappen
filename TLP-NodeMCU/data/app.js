@@ -371,5 +371,10 @@ function connectSSE() {
 loadLayout();
 updateStatus();
 connectSSE();
-setInterval(updateStatus, 5000);
+setInterval(() => {
+  // SSE is the primary realtime channel. Keep HTTP polling as offline fallback only.
+  if (!state.connected) {
+    updateStatus();
+  }
+}, 5000);
 

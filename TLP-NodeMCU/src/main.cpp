@@ -25,6 +25,14 @@ const int HIT_THRESHOLD = 60;
 const unsigned long TELEPLOT_INTERVAL_MS = 50;
 const unsigned long DEBUG_INTERVAL_MS = 200;
 const unsigned long CAN_STATUS_INTERVAL_MS = 5000;
+const unsigned long SSE_STREAM_INTERVAL_MS = 4000;
+const uint8_t CAN_RX_MAX_FRAMES_PER_POLL = 6;
+const uint8_t CAN_RX_LOG_EVERY_N = 10;
+const uint16_t STATUS_JSON_RESERVE_COMPACT = 560;
+const uint16_t STATUS_JSON_RESERVE_FULL = 900;
+const unsigned long NODE_HEARTBEAT_TIMEOUT_MS = 3500;
+const uint8_t TLP_CAN_MSG_HEARTBEAT = 0x1;
+const uint8_t TLP_CAN_MAX_NODES = 32;
 
 bool debugStreamingEnabled = false;
 bool teleplotStreamingEnabled = false;
@@ -34,7 +42,7 @@ unsigned long lastTeleplotAtMs = 0;
 unsigned long lastCanStatusAtMs = 0;
 
 unsigned long lastStatusAtMs = 0;
-const unsigned long STATUS_INTERVAL_MS = 3000;
+const unsigned long STATUS_INTERVAL_MS = 10000;
 bool flapIsUp = false;
 bool manualOverrideEnabled = false;
 bool hitLatched = false;
@@ -56,6 +64,23 @@ bool canNormalModeActive = false;
 uint32_t canRxFrameCount = 0;
 uint32_t canRxIgnoredCount = 0;
 
+struct NodeState
+{
+  bool seen;
+  uint8_t nodeId;
+  uint8_t lastPriority;
+  uint8_t lastMsgType;
+  uint8_t statusFlags;
+  uint8_t protoMajor;
+  uint8_t protoMinor;
+  uint8_t fwVersion;
+  uint32_t uptimeSeconds;
+  unsigned long lastHeartbeatAtMs;
+  uint32_t heartbeatCount;
+};
+
+NodeState nodeStates[TLP_CAN_MAX_NODES] = {};
+
 INT8U detectedCanClock = MCP_8MHZ;
 MCP_CAN canController(MCP2515_CS_PIN);
 
@@ -64,6 +89,54 @@ AsyncEventSource webEvents("/events");
 
 WiFiEventHandler wifiApStationConnectedHandler;
 WiFiEventHandler wifiApStationDisconnectedHandler;
+
+NodeState &getNodeState(uint8_t nodeId)
+{
+  return nodeStates[nodeId & 0x1Fu];
+}
+
+bool isNodeOnline(const NodeState &state, unsigned long nowMs)
+{
+  return state.seen && ((nowMs - state.lastHeartbeatAtMs) <= NODE_HEARTBEAT_TIMEOUT_MS);
+}
+
+uint8_t countOnlineNodes(unsigned long nowMs)
+{
+  uint8_t online = 0;
+  for (uint8_t i = 0; i < TLP_CAN_MAX_NODES; i++)
+  {
+    if (isNodeOnline(nodeStates[i], nowMs))
+    {
+      online++;
+    }
+  }
+  return online;
+}
+
+void updateNodeHeartbeat(uint8_t parsedPriority, uint8_t nodeId, const INT8U *rxData, INT8U rxLen, unsigned long nowMs)
+{
+  if (rxLen < 8)
+  {
+    return;
+  }
+
+  NodeState &state = getNodeState(nodeId);
+  state.seen = true;
+  state.nodeId = nodeId;
+  state.lastPriority = parsedPriority;
+  state.lastMsgType = TLP_CAN_MSG_HEARTBEAT;
+  state.protoMajor = rxData[0];
+  state.protoMinor = rxData[1];
+  state.fwVersion = rxData[2];
+  state.statusFlags = rxData[3];
+  // ATmega heartbeat encodes uptime as little-endian bytes 4..7.
+  state.uptimeSeconds = static_cast<uint32_t>(rxData[4]) |
+                        (static_cast<uint32_t>(rxData[5]) << 8) |
+                        (static_cast<uint32_t>(rxData[6]) << 16) |
+                        (static_cast<uint32_t>(rxData[7]) << 24);
+  state.lastHeartbeatAtMs = nowMs;
+  state.heartbeatCount++;
+}
 
 const __FlashStringHelper *canClockToText(INT8U clockSel)
 {
@@ -235,7 +308,8 @@ void pollCanFrames()
     return;
   }
 
-  while (canController.checkReceive() == CAN_MSGAVAIL)
+  uint8_t processedFrames = 0;
+  while ((processedFrames < CAN_RX_MAX_FRAMES_PER_POLL) && (canController.checkReceive() == CAN_MSGAVAIL))
   {
     INT32U rxId = 0;
     INT8U rxLen = 0;
@@ -248,6 +322,7 @@ void pollCanFrames()
       break;
     }
 
+    processedFrames++;
     canRxFrameCount++;
     const bool isExtended = (rxId & CAN_IS_EXTENDED) != 0;
     const bool isRtr = (rxId & CAN_IS_REMOTE_REQUEST) != 0;
@@ -282,26 +357,38 @@ void pollCanFrames()
       continue;
     }
 
+    const unsigned long nowMs = millis();
     const uint8_t parsedPriority = static_cast<uint8_t>((cleanId >> 9) & 0x03u);
     const uint8_t parsedMsgType = static_cast<uint8_t>((cleanId >> 5) & 0x0Fu);
     const uint8_t parsedNodeId = static_cast<uint8_t>(cleanId & 0x1Fu);
 
-    Serial.print(F("CAN RX id=0x"));
-    Serial.print(cleanId, HEX);
-    Serial.print(F(" ext="));
-    Serial.print(isExtended ? 1 : 0);
-    Serial.print(F(" rtr="));
-    Serial.print(isRtr ? 1 : 0);
-    Serial.print(F(" pri="));
-    Serial.print(parsedPriority);
-    Serial.print(F(" type=0x"));
-    Serial.print(parsedMsgType, HEX);
-    Serial.print(F(" node=0x"));
-    Serial.print(parsedNodeId, HEX);
-    Serial.print(F(" len="));
-    Serial.print(rxLen);
-    Serial.print(F(" count="));
-    Serial.println(canRxFrameCount);
+    if (parsedMsgType == TLP_CAN_MSG_HEARTBEAT)
+    {
+      updateNodeHeartbeat(parsedPriority, parsedNodeId, rxData, rxLen, nowMs);
+    }
+
+    if ((canRxFrameCount <= 5u) || ((canRxFrameCount % CAN_RX_LOG_EVERY_N) == 0u))
+    {
+      Serial.print(F("CAN RX id=0x"));
+      Serial.print(cleanId, HEX);
+      Serial.print(F(" ext="));
+      Serial.print(isExtended ? 1 : 0);
+      Serial.print(F(" rtr="));
+      Serial.print(isRtr ? 1 : 0);
+      Serial.print(F(" pri="));
+      Serial.print(parsedPriority);
+      Serial.print(F(" type=0x"));
+      Serial.print(parsedMsgType, HEX);
+      Serial.print(F(" node=0x"));
+      Serial.print(parsedNodeId, HEX);
+      Serial.print(F(" len="));
+      Serial.print(rxLen);
+      Serial.print(F(" count="));
+      Serial.println(canRxFrameCount);
+    }
+
+    // Keep WiFi and AsyncWebServer tasks responsive while draining CAN RX.
+    yield();
   }
 }
 
@@ -328,7 +415,17 @@ void printCanStatus(unsigned long nowMs)
   Serial.print(F(" rx_err="));
   Serial.print(canController.errorCountRX());
   Serial.print(F(" tx_err="));
-  Serial.println(canController.errorCountTX());
+  Serial.print(canController.errorCountTX());
+  Serial.print(F(" online_nodes="));
+  Serial.print(countOnlineNodes(nowMs));
+
+  const NodeState &node11 = nodeStates[0x11];
+  Serial.print(F(" node11_online="));
+  Serial.print(isNodeOnline(node11, nowMs) ? 1 : 0);
+  Serial.print(F(" node11_hb="));
+  Serial.print(node11.heartbeatCount);
+  Serial.print(F(" node11_uptime_s="));
+  Serial.println(node11.uptimeSeconds);
 }
 
 enum class ControlAction
@@ -577,10 +674,130 @@ void printApStatus()
   Serial.println(WiFi.softAPgetStationNum());
 }
 
-String buildStatusJson()
+void writeStatusJson(Print &out, bool includeExtendedNodes)
+{
+  const unsigned long nowMs = millis();
+  out.print(F("{\"ssid\":\""));
+  out.print(AP_SSID);
+  out.print(F("\",\"ip\":\""));
+  out.print(WiFi.softAPIP().toString());
+  out.print(F("\",\"channel\":"));
+  out.print(WiFi.channel());
+  out.print(F(",\"clients\":"));
+  out.print(WiFi.softAPgetStationNum());
+  out.print(F(",\"mac\":\""));
+  out.print(WiFi.softAPmacAddress());
+  out.print(F("\""));
+  out.print(F(",\"flap\":"));
+  out.print(flapIsUp ? 1 : 0);
+  out.print(F(",\"latched\":"));
+  out.print(hitLatched ? 1 : 0);
+  out.print(F(",\"mode\":\""));
+  out.print(manualOverrideEnabled ? F("manual") : F("auto"));
+  out.print(F("\""));
+  out.print(F(",\"threshold\":"));
+  out.print(hitThreshold);
+  out.print(F(",\"raw\":"));
+  out.print(lastRaw);
+  out.print(F(",\"baseline\":"));
+  out.print(lastBaseline);
+  out.print(F(",\"centered\":"));
+  out.print(lastCentered);
+  out.print(F(",\"envelope\":"));
+  out.print(envelope);
+  out.print(F(",\"lastTriggerRaw\":"));
+  out.print(lastTriggerRaw);
+  out.print(F(",\"lastTriggerEnvelope\":"));
+  out.print(lastTriggerEnvelope);
+  out.print(F(",\"lastTriggerAt\":"));
+  out.print(lastTriggerAtMs);
+  out.print(F(",\"canDetected\":"));
+  out.print(canControllerDetected ? 1 : 0);
+  out.print(F(",\"canLoopback\":"));
+  out.print(canLoopbackPassed ? 1 : 0);
+  out.print(F(",\"canNormal\":"));
+  out.print(canNormalModeActive ? 1 : 0);
+  out.print(F(",\"canRxCount\":"));
+  out.print(canRxFrameCount);
+  out.print(F(",\"canRxIgnored\":"));
+  out.print(canRxIgnoredCount);
+  out.print(F(",\"onlineNodes\":"));
+  out.print(countOnlineNodes(nowMs));
+  out.print(F(",\"canClockMHz\":"));
+  if (detectedCanClock == MCP_8MHZ) out.print(8);
+  else if (detectedCanClock == MCP_16MHZ) out.print(16);
+  else if (detectedCanClock == MCP_10MHZ) out.print(10);
+  else out.print(0);
+
+  const NodeState &node11 = nodeStates[0x11];
+  out.print(F(",\"node11\":{"));
+  out.print(F("\"seen\":"));
+  out.print(node11.seen ? 1 : 0);
+  out.print(F(",\"online\":"));
+  out.print(isNodeOnline(node11, nowMs) ? 1 : 0);
+  out.print(F(",\"heartbeatCount\":"));
+  out.print(node11.heartbeatCount);
+  out.print(F(",\"statusFlags\":"));
+  out.print(node11.statusFlags);
+  out.print(F(",\"protoMajor\":"));
+  out.print(node11.protoMajor);
+  out.print(F(",\"protoMinor\":"));
+  out.print(node11.protoMinor);
+  out.print(F(",\"fwVersion\":"));
+  out.print(node11.fwVersion);
+  out.print(F(",\"uptimeSeconds\":"));
+  out.print(node11.uptimeSeconds);
+  out.print(F(",\"lastHeartbeatMs\":"));
+  out.print(node11.lastHeartbeatAtMs);
+  out.print(F("}"));
+
+  if (includeExtendedNodes)
+  {
+    out.print(F(",\"nodes\":["));
+    bool firstNode = true;
+    for (uint8_t i = 0; i < TLP_CAN_MAX_NODES; i++)
+    {
+      const NodeState &state = nodeStates[i];
+      if (!state.seen)
+      {
+        continue;
+      }
+
+      if (!firstNode)
+      {
+        out.print(',');
+      }
+      firstNode = false;
+
+      out.print(F("{\"id\":"));
+      out.print(state.nodeId);
+      out.print(F(",\"online\":"));
+      out.print(isNodeOnline(state, nowMs) ? 1 : 0);
+      out.print(F(",\"hb\":"));
+      out.print(state.heartbeatCount);
+      out.print(F(",\"flags\":"));
+      out.print(state.statusFlags);
+      out.print(F(",\"uptimeSeconds\":"));
+      out.print(state.uptimeSeconds);
+      out.print(F("}"));
+    }
+    out.print(F("]"));
+  }
+  out.print(F("}"));
+}
+
+void sendStatusJsonResponse(AsyncWebServerRequest *request, bool includeExtendedNodes)
+{
+  AsyncResponseStream *response = request->beginResponseStream("application/json");
+  writeStatusJson(*response, includeExtendedNodes);
+  request->send(response);
+}
+
+String buildStatusJson(bool includeExtendedNodes)
 {
   String json;
-  json.reserve(420);
+  json.reserve(includeExtendedNodes ? STATUS_JSON_RESERVE_FULL : STATUS_JSON_RESERVE_COMPACT);
+  const unsigned long nowMs = millis();
   json += F("{\"ssid\":\"");
   json += AP_SSID;
   json += F("\",\"ip\":\"");
@@ -623,11 +840,70 @@ String buildStatusJson()
   json += canNormalModeActive ? 1 : 0;
   json += F(",\"canRxCount\":");
   json += canRxFrameCount;
+  json += F(",\"canRxIgnored\":");
+  json += canRxIgnoredCount;
+  json += F(",\"onlineNodes\":");
+  json += countOnlineNodes(nowMs);
   json += F(",\"canClockMHz\":");
   if (detectedCanClock == MCP_8MHZ) json += 8;
   else if (detectedCanClock == MCP_16MHZ) json += 16;
   else if (detectedCanClock == MCP_10MHZ) json += 10;
   else json += 0;
+
+  const NodeState &node11 = nodeStates[0x11];
+  json += F(",\"node11\":{");
+  json += F("\"seen\":");
+  json += node11.seen ? 1 : 0;
+  json += F(",\"online\":");
+  json += isNodeOnline(node11, nowMs) ? 1 : 0;
+  json += F(",\"heartbeatCount\":");
+  json += node11.heartbeatCount;
+  json += F(",\"statusFlags\":");
+  json += node11.statusFlags;
+  json += F(",\"protoMajor\":");
+  json += node11.protoMajor;
+  json += F(",\"protoMinor\":");
+  json += node11.protoMinor;
+  json += F(",\"fwVersion\":");
+  json += node11.fwVersion;
+  json += F(",\"uptimeSeconds\":");
+  json += node11.uptimeSeconds;
+  json += F(",\"lastHeartbeatMs\":");
+  json += node11.lastHeartbeatAtMs;
+  json += F("}");
+
+  if (includeExtendedNodes)
+  {
+    json += F(",\"nodes\":[");
+    bool firstNode = true;
+    for (uint8_t i = 0; i < TLP_CAN_MAX_NODES; i++)
+    {
+      const NodeState &state = nodeStates[i];
+      if (!state.seen)
+      {
+        continue;
+      }
+
+      if (!firstNode)
+      {
+        json += ',';
+      }
+      firstNode = false;
+
+      json += F("{\"id\":");
+      json += state.nodeId;
+      json += F(",\"online\":");
+      json += isNodeOnline(state, nowMs) ? 1 : 0;
+      json += F(",\"hb\":");
+      json += state.heartbeatCount;
+      json += F(",\"flags\":");
+      json += state.statusFlags;
+      json += F(",\"uptimeSeconds\":");
+      json += state.uptimeSeconds;
+      json += F("}");
+    }
+    json += F("]");
+  }
   json += F("}");
   return json;
 }
@@ -637,7 +913,7 @@ void startWebServer()
   // API routes MUST be registered before serveStatic, otherwise the
   // catch-all static handler intercepts them and returns 404.
   webServer.on("/api/status", HTTP_GET, [](AsyncWebServerRequest *request) {
-    request->send(200, "application/json", buildStatusJson());
+    sendStatusJsonResponse(request, true);
   });
 
   webServer.on("/api/flap", HTTP_POST, [](AsyncWebServerRequest *request) {
@@ -652,7 +928,7 @@ void startWebServer()
     else if (action == "auto")   applyControlAction(ControlAction::AutoMode,   true);
     else if (action == "reset")  applyControlAction(ControlAction::ResetLatch, true);
     else { request->send(400, "application/json", "{\"error\":\"invalid action\"}"); return; }
-    request->send(200, "application/json", buildStatusJson());
+    sendStatusJsonResponse(request, true);
   });
 
   webServer.on("/api/threshold", HTTP_POST, [](AsyncWebServerRequest *request) {
@@ -663,7 +939,7 @@ void startWebServer()
     const long parsed = strtol(val.c_str(), nullptr, 10);
     if (!setThresholdValue(static_cast<int>(parsed), true))
     { request->send(400, "application/json", "{\"error\":\"value out of range\"}"); return; }
-    request->send(200, "application/json", buildStatusJson());
+    sendStatusJsonResponse(request, true);
   });
 
   webEvents.onConnect([](AsyncEventSourceClient *client) {
@@ -686,14 +962,32 @@ void startWebServer()
 void streamApStatus()
 {
   static unsigned long lastStreamAtMs = 0;
+  static uint32_t sseDropped = 0;
   const unsigned long nowMs = millis();
-  const unsigned long STREAM_INTERVAL_MS = 2000;
 
-  if (nowMs - lastStreamAtMs >= STREAM_INTERVAL_MS)
+  if (nowMs - lastStreamAtMs >= SSE_STREAM_INTERVAL_MS)
   {
     lastStreamAtMs = nowMs;
-    const String status = buildStatusJson();
-    webEvents.send(status.c_str(), "status", nowMs);
+    if (webEvents.count() == 0)
+    {
+      return;
+    }
+
+    const String status = buildStatusJson(false);
+    const AsyncEventSource::SendStatus sendStatus = webEvents.send(status.c_str(), "status", nowMs);
+    if (sendStatus != AsyncEventSource::SendStatus::ENQUEUED)
+    {
+      sseDropped++;
+      if ((sseDropped % 10u) == 0u)
+      {
+        Serial.print(F("SSE backpressure drops="));
+        Serial.print(sseDropped);
+        Serial.print(F(" clients="));
+        Serial.print(webEvents.count());
+        Serial.print(F(" queued_avg="));
+        Serial.println(webEvents.avgPacketsWaiting());
+      }
+    }
   }
 }
 
