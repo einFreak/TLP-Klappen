@@ -7,37 +7,12 @@
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <!-- SVG symbols for flap states -->
-  <svg width="0" height="0" aria-hidden="true" focusable="false">
-    <defs>
-      <symbol id="flap-up-svg" viewBox="0 0 320 220">
-        <rect x="26" y="126" width="268" height="66" rx="8" fill="#303439"></rect>
-        <rect x="36" y="136" width="248" height="46" rx="6" fill="#3f4750"></rect>
-        <circle cx="160" cy="126" r="10" fill="#aeb8bf"></circle>
-        <rect x="154" y="42" width="12" height="86" rx="5" fill="#d65a33"></rect>
-        <polygon points="160,36 138,66 182,66" fill="#ff9360"></polygon>
-        <text x="160" y="212" text-anchor="middle" fill="#ebf0f4" font-size="16" font-family="Space Grotesk, Trebuchet MS, sans-serif">KLAPPE HOCH</text>
-      </symbol>
-      <symbol id="flap-down-svg" viewBox="0 0 320 220">
-        <rect x="26" y="126" width="268" height="66" rx="8" fill="#303439"></rect>
-        <rect x="36" y="136" width="248" height="46" rx="6" fill="#3f4750"></rect>
-        <circle cx="160" cy="126" r="10" fill="#aeb8bf"></circle>
-        <rect x="110" y="120" width="100" height="14" rx="6" fill="#d65a33"></rect>
-        <text x="160" y="212" text-anchor="middle" fill="#ebf0f4" font-size="16" font-family="Space Grotesk, Trebuchet MS, sans-serif">KLAPPE GEFALLEN</text>
-      </symbol>
-    </defs>
-  </svg>
-
   <!-- Flap card template: cloned per flap in app.js -->
   <template id="flap-card-template">
     <div class="flap-card" data-flap-id="">
       <div class="flap-visual" role="button" tabindex="0" aria-label="Details öffnen" data-flap-visual="">
-        <svg class="flap-svg flap-up" viewBox="0 0 320 220" role="img" aria-label="Klappe hoch">
-          <use href="#flap-up-svg"></use>
-        </svg>
-        <svg class="flap-svg flap-down" viewBox="0 0 320 220" role="img" aria-label="Klappe gefallen">
-          <use href="#flap-down-svg"></use>
-        </svg>
+        <img class="flap-svg flap-up" src="/flap-up.svg" alt="Klappe hoch">
+        <img class="flap-svg flap-down" src="/flap-down.svg" alt="Klappe gefallen">
       </div>
       <div class="flap-metrics">
         <div class="metric-pill"><span>State</span><strong data-field="flapState">-</strong></div>

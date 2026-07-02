@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 220" role="img" aria-labelledby="title desc">
+  <title id="title">Target fallen</title>
+  <desc id="desc">Metal target plate in fallen position in front of the stand.</desc>
+
+  <defs>
+    <linearGradient id="steelDown" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#7d8793"/>
+      <stop offset="1" stop-color="#575f69"/>
+    </linearGradient>
+    <radialGradient id="plateFaceDown" cx="42%" cy="34%" r="70%">
+      <stop offset="0" stop-color="#e7ecf1"/>
+      <stop offset="0.55" stop-color="#b6bec7"/>
+      <stop offset="1" stop-color="#76808a"/>
+    </radialGradient>
+  </defs>
+
+  <rect x="156" y="120" width="8" height="30" rx="3" fill="url(#steelDown)" opacity="0.9"/>
+  <rect x="120" y="150" width="80" height="8" rx="4" fill="#6b7480"/>
+  <rect x="114" y="156" width="8" height="26" rx="3" fill="#535b64"/>
+  <rect x="198" y="156" width="8" height="26" rx="3" fill="#535b64"/>
+
+  <g transform="translate(160 160) rotate(0)">
+    <ellipse cx="0" cy="18" rx="44" ry="10" fill="#0f141a" opacity="0.5"/>
+    <ellipse cx="0" cy="0" rx="40" ry="24" fill="url(#plateFaceDown)" stroke="#444c56" stroke-width="4"/>
+    <ellipse cx="0" cy="0" rx="29" ry="16" fill="none" stroke="#59626d" stroke-width="2.5" opacity="0.85"/>
+    <ellipse cx="0" cy="0" rx="16" ry="7" fill="none" stroke="#687280" stroke-width="2" opacity="0.85"/>
+    <ellipse cx="0" cy="0" rx="4" ry="1" fill="#4f5863"/>
+  </g>
+
+  <rect x="108" y="30" width="104" height="160" rx="10" fill="none" stroke="#8f98a3" stroke-opacity="0.45" stroke-width="1.6"/>
+</svg>
