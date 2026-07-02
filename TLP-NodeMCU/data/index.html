@@ -52,6 +52,14 @@
         <div class="detail-item"><span>Sensor Raw</span><strong data-field="detailSensorRaw">-</strong></div>
         <div class="detail-item"><span>Sensor Peak</span><strong data-field="detailSensorPeak">-</strong></div>
         <div class="detail-item"><span>Sensor Noise</span><strong data-field="detailSensorNoise">-</strong></div>
+        <div class="detail-item"><span>Threshold</span><strong data-field="detailThreshold">-</strong></div>
+      </div>
+      <div class="threshold-box">
+        <label for="detailThresholdInput">Threshold setzen (0-1023)</label>
+        <div class="threshold-edit">
+          <input id="detailThresholdInput" type="number" min="0" max="1023" step="1" value="60" data-field="thresholdInput">
+          <button type="button" data-apply-threshold="" data-flap-id="">Setzen</button>
+        </div>
       </div>
       <div class="control-row">
         <button type="button" data-action="up" data-flap-id="">UP</button>

@@ -17,6 +17,7 @@ const uint8_t FW_VERSION = 1;
 
 const uint8_t BASELINE_FILTER_SHIFT = 4;
 const uint8_t ENVELOPE_DECAY_SHIFT = 2;
+const uint8_t NOISE_FLOOR_FILTER_SHIFT = 5;
 
 const unsigned long DEBUG_INTERVAL_MS = 100;
 const unsigned long REFRACTORY_MS = 220;
@@ -49,6 +50,7 @@ int envelope = 0;
 int lastRaw = 0;
 int lastBaseline = 0;
 int lastCentered = 0;
+int lastNoiseFloor = 0;
 uint8_t eventCounter = 0;
 
 int peakSinceLastReport = 0;
@@ -56,7 +58,7 @@ uint8_t sensorSummaryCounter = 0;
 
 bool flapIsUp = true;
 bool autoModeEnabled = true;
-bool debugStreamingEnabled = true;
+bool debugStreamingEnabled = false;
 bool canControllerDetected = false;
 bool canLoopbackPassed = false;
 bool canNormalModeActive = false;
@@ -70,6 +72,8 @@ unsigned long lastSensorSummaryAtMs = 0;
 unsigned long bootMs = 0;
 unsigned long burnInStartedAtMs = 0;
 unsigned long lastBurnInLogAtMs = 0;
+
+long noiseFloorQ8 = 0;
 
 uint32_t heartbeatSentCount = 0;
 uint32_t heartbeatErrorCount = 0;
@@ -164,9 +168,9 @@ void sendSensorSummary(unsigned long nowMs) {
   payload[2] = static_cast<uint8_t>(peakSinceLastReport & 0xFFu);
   payload[3] = static_cast<uint8_t>((peakSinceLastReport >> 8) & 0xFFu);
   
-  // Byte 4..5: noise_floor (approximated by lastBaseline) (u16, little endian)
-  payload[4] = static_cast<uint8_t>(lastBaseline & 0xFFu);
-  payload[5] = static_cast<uint8_t>((lastBaseline >> 8) & 0xFFu);
+  // Byte 4..5: noise_floor from centered magnitude low-pass (u16, little endian)
+  payload[4] = static_cast<uint8_t>(lastNoiseFloor & 0xFFu);
+  payload[5] = static_cast<uint8_t>((lastNoiseFloor >> 8) & 0xFFu);
   
   // Byte 6: summary_counter
   payload[6] = sensorSummaryCounter++;
@@ -472,6 +476,8 @@ void printSample(unsigned long nowMs) {
   Serial.print(lastCentered);
   Serial.print(F(" envelope="));
   Serial.print(envelope);
+  Serial.print(F(" noise_floor="));
+  Serial.print(lastNoiseFloor);
   Serial.print(F(" threshold="));
   Serial.print(hitThreshold);
   Serial.print(F(" event_counter="));
@@ -569,12 +575,13 @@ void setup() {
   pinMode(MCP2515_INT_PIN, INPUT_PULLUP);
   setFlapState(true);
 
-  Serial.begin(9600);
+  Serial.begin(115200);
   while (!Serial) {
     // Exits immediately on ATmega328P boards without native USB.
   }
 
   baselineQ8 = static_cast<long>(analogRead(SENSOR_PIN)) << 8;
+  noiseFloorQ8 = 0;
   bootMs = millis();
   burnInStartedAtMs = bootMs;
   lastBurnInLogAtMs = bootMs;
@@ -609,6 +616,10 @@ void loop() {
   lastCentered = lastRaw - lastBaseline;
 
   const int magnitude = abs(lastCentered);
+
+  noiseFloorQ8 += ((static_cast<long>(magnitude) << 8) - noiseFloorQ8) >> NOISE_FLOOR_FILTER_SHIFT;
+  lastNoiseFloor = static_cast<int>(noiseFloorQ8 >> 8);
+
   if (magnitude > envelope) {
     envelope = magnitude;
   } else if (envelope > 0) {

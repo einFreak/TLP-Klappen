@@ -180,6 +180,7 @@ function renderDetailPanel() {
     detailSensorRaw: String(openFlap.sensorRaw),
     detailSensorPeak: String(openFlap.sensorPeak),
     detailSensorNoise: String(openFlap.sensorNoise),
+    detailThreshold: String(openFlap.threshold),
   };
 
   Object.entries(fields).forEach(([field, value]) => {
@@ -203,6 +204,18 @@ function renderDetailPanel() {
     el.dataset.flapId = openFlap.id;
     el.disabled = disabled;
   });
+
+  const thresholdInput = qf(detailPanel, 'thresholdInput');
+  if (thresholdInput) {
+    thresholdInput.value = String(openFlap.threshold);
+    thresholdInput.disabled = disabled;
+  }
+
+  const thresholdButton = detailPanel.querySelector('[data-apply-threshold]');
+  if (thresholdButton) {
+    thresholdButton.dataset.flapId = openFlap.id;
+    thresholdButton.disabled = disabled;
+  }
 }
 
 function renderCard(flap) {
@@ -559,10 +572,39 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Detail panel action buttons
   detailPanel?.addEventListener('click', (e) => {
+    const thresholdBtn = e.target.closest('[data-apply-threshold]');
+    if (thresholdBtn?.dataset.flapId) {
+      const thresholdInput = qf(detailPanel, 'thresholdInput');
+      const nextValue = thresholdInput ? Number(thresholdInput.value) : NaN;
+      if (!Number.isFinite(nextValue)) {
+        setFlapCommandState(thresholdBtn.dataset.flapId, 'error', 'Threshold ungueltig');
+        return;
+      }
+      postThreshold(thresholdBtn.dataset.flapId, nextValue);
+      return;
+    }
+
     const actionBtn = e.target.closest('[data-action]');
     if (actionBtn?.dataset.flapId) {
       postFlapAction(actionBtn.dataset.flapId, actionBtn.dataset.action);
     }
+  });
+
+  detailPanel?.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    const thresholdInput = e.target.closest('[data-field="thresholdInput"]');
+    if (!thresholdInput) return;
+
+    const openFlap = state.flaps.find((f) => f.detailOpen);
+    if (!openFlap) return;
+
+    e.preventDefault();
+    const nextValue = Number(thresholdInput.value);
+    if (!Number.isFinite(nextValue)) {
+      setFlapCommandState(openFlap.id, 'error', 'Threshold ungueltig');
+      return;
+    }
+    postThreshold(openFlap.id, nextValue);
   });
 });
 
