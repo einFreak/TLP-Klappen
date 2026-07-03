@@ -114,59 +114,6 @@ function updateStatus() {
     });
 }
 
-// ============================================================
-// Reaction Test API Functions (Browser-based logic)
-// ============================================================
-
-let reactionTestState = {
-  active: false,
-  targetNodeId: -1,
-  hitsCollected: 0,
-  reactionTimes: [],
-  lastUpTimeMs: 0,
-};
-
-async function findRandomDownFlap() {
-  try {
-    const res = await fetch('/api/status');
-    if (!res.ok) throw new Error('status fetch failed');
-    
-    const status = await res.json();
-    const nodes = status.nodes || [];
-    
-    // Filter nodes that are online and flap is down (statusFlags bit 0 = 0 means down)
-    const downFlaps = nodes.filter((n) => {
-      const isOnline = Number(n.online) === 1;
-      const isFlapDown = (Number(n.flags) & 0x01) === 0;
-      return isOnline && isFlapDown;
-    });
-    
-    if (downFlaps.length === 0) return null;
-    
-    // Pick random flap from down flaps
-    return downFlaps[Math.floor(Math.random() * downFlaps.length)];
-  } catch (err) {
-    console.error('findRandomDownFlap error:', err);
-    return null;
-  }
-}
-
-async function checkFlapStatus(nodeId) {
-  try {
-    const res = await fetch('/api/status');
-    if (!res.ok) throw new Error('status fetch failed');
-    
-    const status = await res.json();
-    const nodes = status.nodes || [];
-    const flap = nodes.find((n) => n.id === nodeId);
-    
-    return flap || null;
-  } catch (err) {
-    console.error('checkFlapStatus error:', err);
-    return null;
-  }
-}
-
 let sseBackoffMs = 1000;
 let sseSource = null;
 
