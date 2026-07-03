@@ -104,6 +104,7 @@ body {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+  align-items: center;
 }
 
 .stage-bulk-actions button {
@@ -125,6 +126,8 @@ body {
   opacity: 0.5;
   cursor: default;
 }
+
+
 
 .flap-card {
   display: flex;
@@ -605,6 +608,131 @@ body {
 .connection-text {
   font-size: 11px;
   color: var(--muted);
+}
+
+/* Reaction Test Modal */
+.modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+  backdrop-filter: blur(2px);
+}
+
+.modal-content {
+  background: linear-gradient(180deg, #242c37 0%, #1d232c 100%);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 20px;
+  padding: 40px 30px;
+  max-width: 500px;
+  width: 90%;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  position: relative;
+}
+
+.modal-content h2 {
+  margin-bottom: 20px;
+  font-size: 24px;
+  color: var(--text);
+}
+
+.modal-section {
+  text-align: center;
+}
+
+.modal-section p {
+  margin-bottom: 20px;
+  color: var(--muted);
+  font-size: 16px;
+}
+
+.btn-large {
+  background: linear-gradient(135deg, var(--accent) 0%, #ea6e1c 100%);
+  color: white;
+  border: none;
+  border-radius: 12px;
+  padding: 16px 32px;
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  margin: 10px;
+}
+
+.btn-large:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(249, 115, 22, 0.3);
+}
+
+.btn-large:active {
+  transform: translateY(0);
+}
+
+.btn-secondary {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 12px;
+  padding: 12px 24px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  margin: 10px;
+}
+
+.btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.15);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.modal-close {
+  position: absolute;
+  top: 15px;
+  right: 15px;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 24px;
+  cursor: pointer;
+  padding: 5px 10px;
+}
+
+.modal-close:hover {
+  color: var(--text);
+}
+
+.reaction-time-large {
+  font-size: 56px;
+  font-weight: 700;
+  color: var(--accent);
+  font-family: "JetBrains Mono", "Consolas", monospace;
+  margin: 30px 0;
+  text-shadow: 0 0 20px rgba(249, 115, 22, 0.3);
+}
+
+.spinner {
+  display: inline-block;
+  width: 40px;
+  height: 40px;
+  border: 4px solid rgba(255, 255, 255, 0.1);
+  border-top: 4px solid var(--accent);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin: 20px 0;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
 }
 
 @media (max-width: 900px) {
