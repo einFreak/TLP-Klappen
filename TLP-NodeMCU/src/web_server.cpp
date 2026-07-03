@@ -6,10 +6,31 @@
 #include "can_bus.h"
 #include "config.h"
 #include "node_state.h"
-#include "system_state.h"
 
 AsyncWebServer webServer(80);
 AsyncEventSource webEvents("/events");
+
+static void writeStatusJson(Print &out, bool includeExtendedNodes);
+
+class StringPrintSink : public Print {
+public:
+  explicit StringPrintSink(String &target) : target_(target) {}
+
+  size_t write(uint8_t c) override {
+    target_ += static_cast<char>(c);
+    return 1;
+  }
+
+  size_t write(const uint8_t *buffer, size_t size) override {
+    for (size_t i = 0; i < size; i++) {
+      target_ += static_cast<char>(buffer[i]);
+    }
+    return size;
+  }
+
+private:
+  String &target_;
+};
 
 static bool parseNodeIdParam(AsyncWebServerRequest *request, uint8_t &nodeId) {
   String nodeValue;
@@ -32,6 +53,14 @@ static bool parseNodeIdParam(AsyncWebServerRequest *request, uint8_t &nodeId) {
   return true;
 }
 
+static String buildStatusJson(bool includeExtendedNodes) {
+  String json;
+  json.reserve(includeExtendedNodes ? Config::STATUS_JSON_RESERVE_FULL : Config::STATUS_JSON_RESERVE_COMPACT);
+  StringPrintSink sink(json);
+  writeStatusJson(sink, includeExtendedNodes);
+  return json;
+}
+
 static void writeStatusJson(Print &out, bool includeExtendedNodes) {
   const unsigned long nowMs = millis();
   out.print(F("{\"ssid\":\""));
@@ -44,11 +73,6 @@ static void writeStatusJson(Print &out, bool includeExtendedNodes) {
   out.print(WiFi.softAPgetStationNum());
   out.print(F(",\"mac\":\""));
   out.print(WiFi.softAPmacAddress());
-  out.print(F("\""));
-  out.print(F(",\"flap\":"));
-  out.print(flapIsUp ? 1 : 0);
-  out.print(F(",\"mode\":\""));
-  out.print(manualOverrideEnabled ? F("manual") : F("auto"));
   out.print(F("\""));
   out.print(F(",\"canDetected\":"));
   out.print(canControllerDetected ? 1 : 0);
@@ -110,91 +134,8 @@ static void writeStatusJson(Print &out, bool includeExtendedNodes) {
     }
     out.print(F("]"));
   }
+
   out.print(F("}"));
-}
-
-static String buildStatusJson(bool includeExtendedNodes) {
-  String json;
-  json.reserve(includeExtendedNodes ? Config::STATUS_JSON_RESERVE_FULL : Config::STATUS_JSON_RESERVE_COMPACT);
-  const unsigned long nowMs = millis();
-  json += F("{\"ssid\":\"");
-  json += Config::AP_SSID;
-  json += F("\",\"ip\":\"");
-  json += WiFi.softAPIP().toString();
-  json += F("\",\"channel\":");
-  json += WiFi.channel();
-  json += F(",\"clients\":");
-  json += WiFi.softAPgetStationNum();
-  json += F(",\"mac\":\"");
-  json += WiFi.softAPmacAddress();
-  json += F("\"");
-  json += F(",\"flap\":");
-  json += flapIsUp ? 1 : 0;
-  json += F(",\"mode\":\"");
-  json += manualOverrideEnabled ? F("manual") : F("auto");
-  json += F("\"");
-  json += F(",\"canDetected\":");
-  json += canControllerDetected ? 1 : 0;
-  json += F(",\"canLoopback\":");
-  json += canLoopbackPassed ? 1 : 0;
-  json += F(",\"canNormal\":");
-  json += canNormalModeActive ? 1 : 0;
-  json += F(",\"canRxCount\":");
-  json += canRxFrameCount;
-  json += F(",\"canRxIgnored\":");
-  json += canRxIgnoredCount;
-  json += F(",\"canResultCount\":");
-  json += canResultFrameCount;
-  json += F(",\"onlineNodes\":");
-  json += countOnlineNodes(nowMs);
-  json += F(",\"canClockMHz\":");
-  if (detectedCanClock == MCP_8MHZ) json += 8;
-  else if (detectedCanClock == MCP_16MHZ) json += 16;
-  else if (detectedCanClock == MCP_10MHZ) json += 10;
-  else json += 0;
-
-  if (includeExtendedNodes) {
-    json += F(",\"nodes\":[");
-    bool firstNode = true;
-    for (uint8_t i = 0; i < Config::TLP_CAN_MAX_NODES; i++) {
-      const NodeState &state = nodeStates[i];
-      if (!state.seen) {
-        continue;
-      }
-
-      if (!firstNode) {
-        json += ',';
-      }
-      firstNode = false;
-
-      json += F("{\"id\":");
-      json += state.nodeId;
-      json += F(",\"online\":");
-      json += isNodeOnline(state, nowMs) ? 1 : 0;
-      json += F(",\"hb\":");
-      json += state.heartbeatCount;
-      json += F(",\"reboots\":");
-      json += state.rebootCount;
-      json += F(",\"flags\":");
-      json += state.statusFlags;
-      json += F(",\"uptimeSeconds\":");
-      json += state.uptimeSeconds;
-      json += F(",\"sensorRaw\":");
-      json += state.currentRaw;
-      json += F(",\"sensorPeak\":");
-      json += state.peak;
-      json += F(",\"sensorNoise\":");
-      json += state.noiseFloor;
-      json += F(",\"lastUpTimeMs\":");
-      json += state.lastUpDurationMs;
-      json += F(",\"lastUpEventCounter\":");
-      json += state.lastUpEventCounter;
-      json += F("}");
-    }
-    json += F("]");
-  }
-  json += F("}");
-  return json;
 }
 
 static void sendStatusJsonResponse(AsyncWebServerRequest *request, bool includeExtendedNodes) {

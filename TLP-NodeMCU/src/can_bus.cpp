@@ -5,7 +5,6 @@
 
 #include "config.h"
 #include "node_state.h"
-#include "system_state.h"
 
 bool canControllerDetected = false;
 bool canLoopbackPassed = false;
@@ -202,10 +201,6 @@ static void updateNodeHeartbeat(uint8_t parsedPriority, uint8_t nodeId, const IN
   state.lastHeartbeatAtMs = nowMs;
   state.heartbeatCount++;
 
-  const bool remoteRelayPulseActive = (state.statusFlags & (1u << 2)) != 0;
-  const bool remoteAutoMode = (state.statusFlags & (1u << 1)) != 0;
-  flapIsUp = !remoteRelayPulseActive;
-  manualOverrideEnabled = !remoteAutoMode;
 }
 
 static void updateNodeSensorSummary(uint8_t parsedPriority, uint8_t nodeId, const INT8U *rxData, INT8U rxLen, unsigned long nowMs) {

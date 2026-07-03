@@ -11,11 +11,6 @@ constexpr uint8_t AP_CHANNEL = 1;
 constexpr bool AP_HIDDEN = false;
 constexpr uint8_t AP_MAX_CLIENTS = 4;
 
-// Local relay/LED mapping.
-constexpr bool RELAY_ACTIVE_HIGH = true;
-constexpr uint8_t ONBOARD_LED_PIN = LED_BUILTIN;
-constexpr bool ONBOARD_LED_ACTIVE_LOW = true;
-
 // MCP2515 wiring.
 constexpr uint8_t MCP2515_CS_PIN = D1;
 constexpr uint8_t MCP2515_INT_PIN = D0;
