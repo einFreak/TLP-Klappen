@@ -5,7 +5,7 @@
 // Central project configuration (pins, protocol constants, timing).
 namespace Config {
 // WiFi AP settings.
-constexpr char AP_SSID[] = "TLP-Klappen";
+constexpr char AP_SSID[] = "TLP-Klappen(tlp12345)";
 constexpr char AP_PASSWORD[] = "tlp12345"; // WPA2, >= 8 chars
 constexpr uint8_t AP_CHANNEL = 1;
 constexpr bool AP_HIDDEN = false;
