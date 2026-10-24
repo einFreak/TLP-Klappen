@@ -1,5 +1,17 @@
 # TLP-Klappen
 
+## Lokale USB-Oberflaeche
+
+Mit [TLP-Local](TLP-Local/README.md) laeuft dieselbe Weboberflaeche auf dem PC und
+kommuniziert in Edge/Chrome direkt per Web Serial mit dem NodeMCU. Start:
+`cd TLP-Local` und `npm.cmd start` (Node.js 22+; kein npm install erforderlich).
+Die ausgegebene localhost-URL oeffnen und **USB verbinden** waehlen.
+
+Die aktuelle NodeMCU-Firmware und LittleFS muessen installiert sein. Standard
+bleibt WLAN; erst ein bestaetigter serieller Befehl schaltet WLAN/HTTP/SSE aus.
+Trennen oder 10 Sekunden ohne Lebenszeichen aktivieren WLAN wieder. ATmega und
+CAN-Protokoll bleiben unveraendert. Details, Grenzen und Tests: [Anleitung](TLP-Local/README.md).
+
 ## Projektplanung: Klappscheiben für Airsoft mit Piezo-Sensorik
 
 ### Ziel

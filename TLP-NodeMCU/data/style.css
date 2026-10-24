@@ -547,6 +547,55 @@ body {
   flex: 0 0 auto;
 }
 
+body.local-mode {
+  padding-bottom: 22px;
+}
+
+.network-panel--local {
+  position: static;
+  flex-wrap: wrap;
+  overflow: visible;
+  white-space: normal;
+  min-width: 0;
+}
+
+.network-panel--local .status-grid {
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+#serialControls:not([hidden]) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+#serialControls button {
+  padding: 8px 12px;
+  min-height: 36px;
+  max-width: 100%;
+  border: 1px solid var(--muted);
+  border-radius: 6px;
+  background: var(--panel-soft);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  white-space: normal;
+  cursor: pointer;
+}
+
+#serialControls button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+#serialConnectionState {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
 .status-grid {
   display: flex;
   align-items: center;

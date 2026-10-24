@@ -5,6 +5,8 @@
 #include "can_bus.h"
 #include "config.h"
 #include "web_server.h"
+#include "serial_gateway.h"
+#include "status_output.h"
 
 WiFiEventHandler wifiApStationConnectedHandler;
 WiFiEventHandler wifiApStationDisconnectedHandler;
@@ -35,6 +37,7 @@ void setup() {
 
   wifiApStationConnectedHandler = WiFi.onSoftAPModeStationConnected(
     [](const WiFiEventSoftAPModeStationConnected &e) {
+      if (serialProtocolActive()) return;
       Serial.print(F("AP: station connected aid="));
       Serial.printf("%d mac=%02X:%02X:%02X:%02X:%02X:%02X\n",
         e.aid, e.mac[0], e.mac[1], e.mac[2], e.mac[3], e.mac[4], e.mac[5]);
@@ -42,6 +45,7 @@ void setup() {
 
   wifiApStationDisconnectedHandler = WiFi.onSoftAPModeStationDisconnected(
     [](const WiFiEventSoftAPModeStationDisconnected &e) {
+      if (serialProtocolActive()) return;
       Serial.print(F("AP: station disconnected aid="));
       Serial.println(e.aid);
     });
@@ -73,9 +77,11 @@ void setup() {
 }
 
 void loop() {
+  const unsigned long loopStartedAtUs = micros();
   const unsigned long nowMs = millis();
 
   cleanupExpiredPendingCommands(nowMs);
+  pollSerialGateway();
 
   if (nowMs - lastStatusAtMs >= Config::STATUS_INTERVAL_MS) {
     lastStatusAtMs = nowMs;
@@ -87,4 +93,6 @@ void loop() {
   streamApStatus();
 
   yield();
+  const unsigned long durationUs = micros() - loopStartedAtUs;
+  if (durationUs > maxLoopDurationUs) maxLoopDurationUs = durationUs;
 }

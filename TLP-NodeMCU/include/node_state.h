@@ -26,6 +26,7 @@ struct NodeState {
   unsigned long lastSensorSummaryAtMs;
   uint32_t lastUpDurationMs;
   uint8_t lastUpEventCounter;
+  uint32_t lastUpEventSequence;
   unsigned long lastFlapTimingAtMs;
 };
 

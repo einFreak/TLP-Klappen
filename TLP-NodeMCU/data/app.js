@@ -348,7 +348,7 @@ function renderDetailPanel() {
   }
 
   // Update action buttons
-  const disabled = !openFlap.online || openFlap.commandState === 'pending';
+  const disabled = !state.connected || !openFlap.online || openFlap.commandState === 'pending';
   detailPanel.querySelectorAll('[data-action]').forEach((el) => {
     el.dataset.flapId = openFlap.id;
     el.disabled = disabled;
@@ -402,7 +402,7 @@ function renderCard(flap) {
     card.classList.remove('show-actions');
   }
 
-  const quickDisabled = !flap.online || flap.commandState === 'pending';
+  const quickDisabled = !state.connected || !flap.online || flap.commandState === 'pending';
   card.querySelectorAll('[data-action], [data-move-flap]').forEach((el) => {
     el.disabled = quickDisabled;
   });
@@ -440,6 +440,11 @@ function renderNetwork() {
 function render() {
   renderStage();
   renderNetwork();
+  const unavailable = !state.connected || !state.flaps.some((flap) => flap.online);
+  for (const id of ['allFlapsUpBtn', 'allFlapsDownBtn', 'reactionTestBtn', 'reactionTestStartBtn', 'reactionTestAgainBtn']) {
+    const button = document.getElementById(id);
+    if (button) button.disabled = unavailable;
+  }
 }
 
 async function postBulkFlapAction(action) {
@@ -524,8 +529,8 @@ function applyStatus(data) {
   }
 
   state.network = {
-    ssid: data.ssid ?? '-',
-    ip: data.ip ?? '-',
+    ssid: data.mode === 'local' ? 'WLAN aus' : data.ssid ?? '-',
+    ip: data.mode === 'local' ? 'USB / Serial' : data.ip ?? '-',
     channel: data.channel ?? '-',
     clients: data.clients ?? '-',
     mac: data.mac ?? '-',
@@ -738,7 +743,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const actionBtn = target.closest('[data-action]');
       if (actionBtn?.dataset.flapId) {
         if (actionBtn.disabled) return;
-        postFlapAction(actionBtn.dataset.flapId, actionBtn.dataset.action);
+        postFlapAction(actionBtn.dataset.flapId, actionBtn.dataset.action).catch(() => {});
         return;
       }
 
@@ -789,14 +794,14 @@ document.addEventListener('DOMContentLoaded', () => {
         setFlapCommandState(thresholdBtn.dataset.flapId, 'error', 'Threshold ungueltig');
         return;
       }
-      postThreshold(thresholdBtn.dataset.flapId, nextValue);
+      postThreshold(thresholdBtn.dataset.flapId, nextValue).catch(() => {});
       return;
     }
 
     const actionBtn = e.target.closest('[data-action]');
     if (actionBtn?.dataset.flapId) {
       if (actionBtn.disabled) return;
-      postFlapAction(actionBtn.dataset.flapId, actionBtn.dataset.action);
+      postFlapAction(actionBtn.dataset.flapId, actionBtn.dataset.action).catch(() => {});
     }
   });
 
@@ -814,7 +819,7 @@ document.addEventListener('DOMContentLoaded', () => {
       setFlapCommandState(openFlap.id, 'error', 'Threshold ungueltig');
       return;
     }
-    postThreshold(openFlap.id, nextValue);
+    postThreshold(openFlap.id, nextValue).catch(() => {});
   });
 
   if (typeof window.setupReactionGames === 'function') {

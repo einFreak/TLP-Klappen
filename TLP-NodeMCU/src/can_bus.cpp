@@ -5,6 +5,7 @@
 
 #include "config.h"
 #include "node_state.h"
+#include "serial_gateway.h"
 
 bool canControllerDetected = false;
 bool canLoopbackPassed = false;
@@ -167,8 +168,10 @@ bool sendCanCommand(uint8_t targetNodeId,
 
   const INT8U txResult = canController.sendMsgBuf(canId, 0, safeLen + 1, txPayload);
   if (txResult != CAN_OK) {
-    Serial.print(F("CAN CMD tx_fail code="));
-    Serial.println(txResult);
+    if (!serialProtocolActive()) {
+      Serial.print(F("CAN CMD tx_fail code="));
+      Serial.println(txResult);
+    }
     return false;
   }
   return true;
@@ -239,6 +242,7 @@ static void updateNodeFlapTiming(uint8_t parsedPriority, uint8_t nodeId, const I
                            (static_cast<uint32_t>(rxData[2]) << 16) |
                            (static_cast<uint32_t>(rxData[3]) << 24);
   state.lastUpEventCounter = rxData[4];
+  state.lastUpEventSequence++;
   state.lastFlapTimingAtMs = nowMs;
 }
 
@@ -393,8 +397,10 @@ void pollCanFrames() {
     INT8U rxData[8] = {0};
     const INT8U rxResult = canController.readMsgBuf(&rxId, &rxLen, rxData);
     if (rxResult != CAN_OK) {
-      Serial.print(F("CAN RX FAIL code="));
-      Serial.println(rxResult);
+      if (!serialProtocolActive()) {
+        Serial.print(F("CAN RX FAIL code="));
+        Serial.println(rxResult);
+      }
       break;
     }
 
@@ -406,7 +412,7 @@ void pollCanFrames() {
 
     if (isExtended || isRtr) {
       canRxIgnoredCount++;
-      if (canRxIgnoredCount <= 5u) {
+      if (canRxIgnoredCount <= 5u && !serialProtocolActive()) {
         Serial.print(F("CAN RX ext/rtr #"));
         Serial.print(canRxIgnoredCount);
         Serial.print(F(" raw_id=0x"));
@@ -419,7 +425,7 @@ void pollCanFrames() {
         Serial.print(isRtr ? 1 : 0);
         Serial.print(F(" len="));
         Serial.println(rxLen);
-      } else if ((canRxIgnoredCount % 25u) == 0u) {
+      } else if ((canRxIgnoredCount % 25u) == 0u && !serialProtocolActive()) {
         Serial.print(F("CAN RX ignored ext/rtr frames="));
         Serial.println(canRxIgnoredCount);
       }
@@ -441,7 +447,7 @@ void pollCanFrames() {
       rememberCanResult(parsedNodeId, rxData, rxLen, nowMs);
     }
 
-    if ((canRxFrameCount <= 5u) || ((canRxFrameCount % Config::CAN_RX_LOG_EVERY_N) == 0u)) {
+    if (!serialProtocolActive() && ((canRxFrameCount <= 5u) || ((canRxFrameCount % Config::CAN_RX_LOG_EVERY_N) == 0u))) {
       Serial.print(F("CAN RX id=0x"));
       Serial.print(cleanId, HEX);
       Serial.print(F(" ext="));
@@ -465,6 +471,7 @@ void pollCanFrames() {
 }
 
 void printCanStatus(unsigned long nowMs) {
+  if (serialProtocolActive()) return;
   if (nowMs - lastCanStatusAtMs < Config::CAN_STATUS_INTERVAL_MS) {
     return;
   }

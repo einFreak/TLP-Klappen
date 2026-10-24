@@ -2,16 +2,24 @@
 // TLP-Klappen API & CAN Communication
 // ============================================================
 
+let localCommandQueue = Promise.resolve();
+
+function runControlCommand(task) {
+  if (!window.TLPTransport.local) return task();
+  const session = window.TLPTransport.session;
+  const result = localCommandQueue.catch(() => {}).then(() => {
+    if (window.TLPTransport.session !== session) throw new Error('USB-Sitzung beendet');
+    return task();
+  });
+  localCommandQueue = result;
+  return result;
+}
+
 async function waitForCommandResult(requestId, timeoutMs = 1500) {
   const start = Date.now();
 
   while ((Date.now() - start) < timeoutMs) {
-    const res = await fetch('/api/command-result?id=' + encodeURIComponent(requestId));
-    if (!res.ok) {
-      throw new Error('command result lookup failed');
-    }
-
-    const result = await res.json();
+    const result = await window.TLPTransport.result(Number(requestId));
     if (Number(result.done) === 1) {
       return result;
     }
@@ -32,30 +40,30 @@ async function postFlapAction(flapId, action) {
       throw new Error('node not found');
     }
 
-    if (!flap.online) {
+    if (!state.connected || !flap.online) {
       throw new Error('node offline');
     }
 
-    const res = await fetch('/api/flap?action=' + encodeURIComponent(action) + '&node=' + encodeURIComponent(nodeId), { method: 'POST' });
-    if (!res.ok) throw new Error('flap action send failed');
-
-    const accepted = await res.json();
-    if (!accepted || Number(accepted.pending) !== 1 || !accepted.requestId) {
-      throw new Error('invalid command accept response');
-    }
-
-    const result = await waitForCommandResult(accepted.requestId, 2000);
-    if (result.state !== 'ack') {
-      throw new Error('flap action rejected: ' + result.state);
-    }
+    const result = await runControlCommand(async () => {
+      if (!state.connected || !flap.online) throw new Error('node offline');
+      const accepted = await window.TLPTransport.flap(nodeId, action);
+      if (!accepted || Number(accepted.pending) !== 1 || !accepted.requestId) {
+        throw new Error('invalid command accept response');
+      }
+      const confirmed = await waitForCommandResult(accepted.requestId, 2000);
+      if (confirmed.state !== 'ack') throw new Error('flap action rejected: ' + confirmed.state);
+      return confirmed;
+    });
 
     setFlapCommandState(flapId, 'ok', 'Aktion bestaetigt');
     updateStatus();
     text('connectionStatus', 'Aktion fuer Node ' + nodeId + ' ausgefuehrt');
+    return result;
   } catch (err) {
     console.error(err);
     setFlapCommandState(flapId, 'error', 'Aktion fehlgeschlagen');
     text('connectionStatus', 'Aktion fehlgeschlagen');
+    throw err;
   }
 }
 
@@ -69,101 +77,96 @@ async function postThreshold(flapId, value) {
       throw new Error('node not found');
     }
 
-    if (!flap.online) {
+    if (!state.connected || !flap.online) {
       throw new Error('node offline');
     }
 
-    const v = Math.max(0, Math.min(1023, Number(value) || 0));
-    const res = await fetch('/api/threshold?value=' + encodeURIComponent(v) + '&node=' + encodeURIComponent(nodeId), { method: 'POST' });
-    if (!res.ok) throw new Error('threshold update send failed');
-
-    const accepted = await res.json();
-    if (!accepted || Number(accepted.pending) !== 1 || !accepted.requestId) {
-      throw new Error('invalid command accept response');
-    }
-
-    const result = await waitForCommandResult(accepted.requestId, 2000);
-    if (result.state !== 'ack') {
-      throw new Error('threshold rejected: ' + result.state);
-    }
+    const threshold = Number(value);
+    if (!Number.isInteger(threshold) || threshold < 0 || threshold > 1023) throw new Error('invalid threshold');
+    const result = await runControlCommand(async () => {
+      if (!state.connected || !flap.online) throw new Error('node offline');
+      const accepted = await window.TLPTransport.threshold(nodeId, threshold);
+      if (!accepted || Number(accepted.pending) !== 1 || !accepted.requestId) {
+        throw new Error('invalid command accept response');
+      }
+      const confirmed = await waitForCommandResult(accepted.requestId, 2000);
+      if (confirmed.state !== 'ack') throw new Error('threshold rejected: ' + confirmed.state);
+      return confirmed;
+    });
 
     setFlapCommandState(flapId, 'ok', 'Schwellwert bestaetigt');
     updateStatus();
     text('connectionStatus', 'Schwellwert fuer Node ' + nodeId + ' gesetzt');
+    return result;
   } catch (err) {
     console.error(err);
     setFlapCommandState(flapId, 'error', 'Schwellwert fehlgeschlagen');
     text('connectionStatus', 'Schwellwert fehlgeschlagen');
+    throw err;
   }
 }
 
 function updateStatus() {
-  fetch('/api/status')
-    .then((r) => {
-      if (!r.ok) throw new Error(r.status);
-      return r.json();
-    })
+  return window.TLPTransport.getStatus()
     .then((data) => {
       state.connected = true;
       applyStatus(data);
-      text('connectionStatus', 'Status OK');
+      text('connectionStatus', window.TLPTransport.local ? 'USB live; WLAN aus' : 'Status OK');
     })
     .catch(() => {
-      state.connected = false;
-      text('connectionStatus', 'Verbindung verloren');
+      setConnectionState(false, 'Verbindung verloren');
     });
 }
 
-let sseBackoffMs = 1000;
-let sseSource = null;
-
-function connectSSE() {
-  if (sseSource) {
-    sseSource.close();
-    sseSource = null;
-  }
-
-  const es = new EventSource('/events');
-  sseSource = es;
-
-  es.addEventListener('status', (e) => {
-    try {
-      sseBackoffMs = 1000;
-      state.connected = true;
-      applyStatus(JSON.parse(e.data));
-      text('connectionStatus', 'Live');
-    } catch (_) {}
-  });
-
-  es.onerror = () => {
-    state.connected = false;
-    text('connectionStatus', 'SSE offline - Retry in ' + (sseBackoffMs / 1000).toFixed(0) + 's');
-    es.close();
-    sseSource = null;
-
-    const delay = sseBackoffMs;
-    sseBackoffMs = Math.min(sseBackoffMs * 2, 30000);
-    setTimeout(connectSSE, delay);
-  };
+function setConnectionState(connected, message) {
+  state.connected = connected;
+  if (!connected) state.flaps.forEach((flap) => { flap.online = false; });
+  text('connectionStatus', message);
+  text('serialConnectionState', message);
+  render();
+  renderDetailPanel();
 }
 
-// Auto-start
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', () => {
+function startConnection() {
+  const transport = window.TLPTransport;
+  transport.subscribe((data) => {
+    state.connected = true;
+    applyStatus(data);
+  }, setConnectionState);
+  if (!transport.local) {
     updateStatus();
-    connectSSE();
-    setInterval(() => {
-      if (!state.connected) {
-        updateStatus();
-      }
-    }, 5000);
+    setInterval(() => { if (!state.connected) updateStatus(); }, 5000);
+    return;
+  }
+  const controls = document.getElementById('serialControls');
+  const connect = document.getElementById('serialConnectBtn');
+  const disconnect = document.getElementById('serialDisconnectBtn');
+  controls.hidden = false;
+  document.body.classList.add('local-mode');
+  controls.closest('.network-panel').classList.add('network-panel--local');
+  text('networkHeading', 'USB / Serial');
+  let busy = false;
+  function updateButtons() {
+    connect.disabled = busy || Boolean(transport.port);
+    disconnect.disabled = busy || !transport.port;
+  }
+  transport.subscribe(() => {}, () => { queueMicrotask(updateButtons); });
+  connect.addEventListener('click', async () => {
+    busy = true;
+    updateButtons();
+    try { await transport.connect(); }
+    catch (error) { setConnectionState(false, error.message); }
+    finally { busy = false; updateButtons(); }
   });
-} else {
-  updateStatus();
-  connectSSE();
-  setInterval(() => {
-    if (!state.connected) {
-      updateStatus();
-    }
-  }, 5000);
+  disconnect.addEventListener('click', async () => {
+    busy = true;
+    updateButtons();
+    try { await transport.disconnect(); }
+    catch (error) { setConnectionState(false, error.message); }
+    finally { busy = false; updateButtons(); }
+  });
+  updateButtons();
 }
+
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', startConnection);
+else startConnection();

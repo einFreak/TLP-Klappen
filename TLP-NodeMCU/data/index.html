@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>TLP-Klappen AP Status</title>
+  <title>TLP-Klappen</title>
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -84,7 +84,12 @@
     </section>
 
     <footer class="network-panel">
-      <h2>Netzwerk</h2>
+      <h2 id="networkHeading">Netzwerk</h2>
+      <div id="serialControls" hidden>
+        <button type="button" id="serialConnectBtn">USB verbinden</button>
+        <button type="button" id="serialDisconnectBtn" disabled>Trennen / WLAN aktivieren</button>
+        <span id="serialConnectionState" role="status" aria-live="polite">USB nicht verbunden</span>
+      </div>
       <div class="status-grid">
         <div class="status-item">
           <div class="status-label">SSID</div>
@@ -149,6 +154,7 @@
     </div>
   </div>
 
+  <script src="/transport.js"></script>
   <script src="/api.js"></script>
   <script src="/games.js"></script>
   <script src="/app.js"></script>

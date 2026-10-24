@@ -20,6 +20,8 @@ constexpr unsigned long CAN_STATUS_INTERVAL_MS = 5000;
 constexpr unsigned long SSE_STREAM_INTERVAL_MS = 4000;
 constexpr uint8_t CAN_RX_MAX_FRAMES_PER_POLL = 6;
 constexpr uint8_t CAN_RX_LOG_EVERY_N = 10;
+constexpr unsigned long SERIAL_LEASE_MS = 10000;
+constexpr unsigned long SERIAL_SESSION_MS = 15000;
 
 // Status serialization and online detection.
 constexpr uint16_t STATUS_JSON_RESERVE_COMPACT = 560;

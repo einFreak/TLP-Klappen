@@ -7,10 +7,7 @@
 
   async function findRandomDownFlap() {
     try {
-      const res = await fetch('/api/status');
-      if (!res.ok) throw new Error('status fetch failed');
-
-      const status = await res.json();
+      const status = await window.TLPTransport.getStatus();
       const nodes = status.nodes || [];
       const downFlaps = nodes.filter((n) => {
         const isOnline = Number(n.online) === 1;
@@ -28,10 +25,7 @@
 
   async function checkFlapStatus(nodeId) {
     try {
-      const res = await fetch('/api/status');
-      if (!res.ok) throw new Error('status fetch failed');
-
-      const status = await res.json();
+      const status = await window.TLPTransport.getStatus();
       const nodes = status.nodes || [];
       const flap = nodes.find((n) => Number(n.id) === Number(nodeId));
       return flap || null;
@@ -107,11 +101,16 @@
       section.style.display = 'block';
     }
 
-    async function waitForFlapHit(nodeId, timeoutMs) {
+    async function waitForFlapHit(nodeId, timeoutMs, previousCounter) {
       const startTime = Date.now();
 
       return new Promise((resolve) => {
         const checkInterval = setInterval(async () => {
+          if (!reactionTestSession.running || !state.connected) {
+            clearInterval(checkInterval);
+            resolve(null);
+            return;
+          }
           const elapsed = Date.now() - startTime;
 
           if (elapsed > timeoutMs) {
@@ -128,7 +127,8 @@
           }
 
           const isFlapDown = (Number(status.flags) & 0x01) === 0;
-          if (isFlapDown) {
+          const eventSequence = Number(status.lastUpEventSequence ?? status.lastUpEventCounter);
+          if (isFlapDown && eventSequence !== previousCounter) {
             clearInterval(checkInterval);
             const reactionTimeMs = Number(status.lastUpTimeMs);
             resolve(reactionTimeMs > 0 ? reactionTimeMs : null);
@@ -159,7 +159,7 @@
 
       showReactionTestSection(reactionTestSignaled);
 
-      const reactionTimeMs = await waitForFlapHit(flap.id, 10000);
+      const reactionTimeMs = await waitForFlapHit(flap.id, 10000, Number(flap.lastUpEventSequence ?? flap.lastUpEventCounter));
       if (reactionTimeMs === null) {
         showReactionTestSection(reactionTestInitial);
         reactionTestSession.running = false;

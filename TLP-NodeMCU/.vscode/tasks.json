@@ -12,7 +12,7 @@
         "--environment",
         "nodemcuv2",
         "--upload-port",
-        "COM7"
+        "COM8"
       ],
       "problemMatcher": [],
       "group": {
@@ -39,7 +39,7 @@
         "--environment",
         "nodemcuv2",
         "--upload-port",
-        "COM7"
+        "COM8"
       ],
       "problemMatcher": [],
       "group": {
@@ -66,7 +66,7 @@
         "--environment",
         "nodemcuv2",
         "--upload-port",
-        "COM7"
+        "COM8"
       ],
       "problemMatcher": [],
       "group": {
