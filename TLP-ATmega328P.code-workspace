@@ -1,0 +1,21 @@
+{
+	"folders": [
+		{
+			"name": "TLP-ATmega328P",
+			"path": "TLP-ATmega328P"
+		},
+		{
+			"name": "TLP-NodeMCU",
+			"path": "TLP-NodeMCU"
+		},
+		{
+			"name": "TLP-Local",
+			"path": "TLP-Local"
+		},
+		{
+			"name": "TLP-Klappen",
+			"path": "."
+		}
+	],
+	"settings": {}
+}
